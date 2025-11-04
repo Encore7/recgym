@@ -1,0 +1,18 @@
+[project]
+name = "recgym"
+version = "0.1.0"
+description = "Local production-grade recommendation system"
+authors = [{ name = "Your Name" }]
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.black]
+line-length = 88
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.mypy]
+strict = true
+ignore_missing_imports = true
