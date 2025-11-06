@@ -2,6 +2,7 @@ auth_enabled: false
 
 server:
   http_listen_port: 3100
+  grpc_listen_port: 9096
 
 ingester:
   lifecycler:
@@ -11,10 +12,9 @@ ingester:
       replication_factor: 1
   chunk_idle_period: 5m
   max_chunk_age: 1h
-  chunk_target_size: 1048576
   wal:
     enabled: true
-    dir: /tmp/wal
+    dir: /loki/wal
 
 schema_config:
   configs:
@@ -28,10 +28,18 @@ schema_config:
 
 storage_config:
   boltdb_shipper:
-    active_index_directory: /tmp/index
-    cache_location: /tmp/boltdb-cache
+    active_index_directory: /loki/index
+    cache_location: /loki/cache
   filesystem:
-    directory: /tmp/chunks
+    directory: /loki/chunks
+
+compactor:
+  working_directory: /loki/compactor
+  shared_store: filesystem
 
 limits_config:
+  retention_period: 7d
+
+table_manager:
+  retention_deletes_enabled: true
   retention_period: 7d

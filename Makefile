@@ -1,14 +1,16 @@
+COMPOSE_FILE=infra/docker-compose.yml
+
 up:
-\tdocker compose -f infra/docker-compose.yml up -d
+	@docker compose -f $(COMPOSE_FILE) up -d
 
 down:
-\tdocker compose -f infra/docker-compose.yml down -v
+	@docker compose -f $(COMPOSE_FILE) down -v
 
 ps:
-\tdocker compose -f infra/docker-compose.yml ps
+	@docker compose -f $(COMPOSE_FILE) ps
 
 logs:
-\tdocker compose -f infra/docker-compose.yml logs -f
+	@docker compose -f $(COMPOSE_FILE) logs -f
 
 restart:
-\tmake down && make up
+	@$(MAKE) down && $(MAKE) up
