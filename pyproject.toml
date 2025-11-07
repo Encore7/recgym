@@ -2,9 +2,12 @@
 name = "recgym"
 version = "0.1.0"
 description = "Local production-grade recommendation system"
-authors = [{ name = "Your Name" }]
+authors = [{ name = "Aman Kumar" }]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "confluent-kafka = ^2.4.0",
+    "fastavro = ^1.9.0",
+]
 
 [tool.black]
 line-length = 88
