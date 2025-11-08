@@ -1,0 +1,12 @@
+{
+  "type": "record",
+  "name": "ItemFeatureUpdate",
+  "fields": [
+    {"name": "item_id", "type": "string"},
+    {"name": "views_1h", "type": "int"},
+    {"name": "cart_1h", "type": "int"},
+    {"name": "purchases_1h", "type": "int"},
+    {"name": "avg_price_1h", "type": "float"},
+    {"name": "ts", "type": "long", "logicalType": "timestamp-millis"}
+  ]
+}

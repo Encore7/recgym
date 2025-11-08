@@ -1,0 +1,17 @@
+{
+  "type": "record",
+  "name": "RetailEvent",
+  "namespace": "recgym.avro",
+  "fields": [
+    {"name": "user_id", "type": "string"},
+    {"name": "session_id", "type": "string"},
+    {"name": "item_id", "type": "string"},
+    {"name": "event_type", "type": {"type": "enum", "name": "EventType", "symbols": ["view","add_to_cart","purchase"]}},
+    {"name": "price", "type": "float"},
+    {"name": "category_path", "type": {"type": "array", "items": "string"}},
+    {"name": "device", "type": "string"},
+    {"name": "page", "type": "string"},
+    {"name": "referrer", "type": ["null","string"], "default": null},
+    {"name": "ts", "type": "long", "logicalType": "timestamp-millis"}
+  ]
+}

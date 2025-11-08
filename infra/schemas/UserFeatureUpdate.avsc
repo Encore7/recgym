@@ -1,0 +1,10 @@
+{
+  "type": "record",
+  "name": "UserFeatureUpdate",
+  "fields": [
+    {"name": "user_id", "type": "string"},
+    {"name": "session_len", "type": "int"},
+    {"name": "clicks_in_session", "type": "int"},
+    {"name": "last_event_ts", "type": "long", "logicalType": "timestamp-millis"}
+  ]
+}
