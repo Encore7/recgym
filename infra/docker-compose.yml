@@ -149,6 +149,36 @@ services:
     depends_on:
       - loki
 
+    otel-collector:
+      image: otel/opentelemetry-collector-contrib:0.103.0
+      container_name: recgym-otel-collector
+      command: ["--config=/etc/otel/config.yaml"]
+      volumes:
+        - ./otel/config.yaml:/etc/otel/config.yaml
+      ports:
+        - "4317:4317"   # OTLP gRPC
+        - "4318:4318"   # OTLP HTTP
+      depends_on:
+        - prometheus
+        - tempo
+        - loki
+
+  generator:
+    build:
+      context: ../apps/generator
+    container_name: recgym-generator
+    depends_on:
+      - kafka
+      - schema-registry
+      - otel-collector
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_SERVICE_NAME: recgym-generator
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_URL: http://schema-registry:8081
+      PYTHONUNBUFFERED: "1"
+    restart: unless-stopped
+
 
 volumes:
   postgres_data:
