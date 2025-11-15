@@ -1,4 +1,6 @@
-COMPOSE_FILE=infra/docker-compose.yml
+COMPOSE_FILE=docker-compose.yml
+
+.PHONY: up down ps logs restart build rebuild
 
 up:
 	@docker compose -f $(COMPOSE_FILE) up -d
@@ -14,3 +16,9 @@ logs:
 
 restart:
 	@$(MAKE) down && $(MAKE) up
+
+build:
+	@docker compose -f $(COMPOSE_FILE) build
+
+rebuild:
+	@docker compose -f $(COMPOSE_FILE) build --no-cache

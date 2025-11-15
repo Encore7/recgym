@@ -1,0 +1,238 @@
+# NETWORKS
+networks:
+  recgym-net:
+    driver: bridge
+
+# SERVICES
+services:
+
+  # POSTGRES
+  postgres:
+    image: postgres:15
+    container_name: recgym-postgres
+    networks: [recgym-net]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-recgym}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-recgym}
+      POSTGRES_DB: ${POSTGRES_DB:-recgym}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "recgym"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # REDIS
+  redis:
+    image: redis:7
+    container_name: recgym-redis
+    networks: [recgym-net]
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  # ZOOKEEPER
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    container_name: recgym-zookeeper
+    networks: [recgym-net]
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    healthcheck:
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # KAFKA
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    container_name: recgym-kafka
+    networks: [recgym-net]
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "echo > /dev/tcp/kafka/9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # SCHEMA REGISTRY
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.4.0
+    container_name: recgym-schema-registry
+    networks: [recgym-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+    ports:
+      - "8081:8081"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/subjects"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # KAFKA UI
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: recgym-kafka-ui
+    networks: [recgym-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_SCHEMAREGISTRY: http://schema-registry:8081
+    ports:
+      - "8080:8080"
+
+  # MINIO
+  minio:
+    image: minio/minio:latest
+    container_name: recgym-minio
+    networks: [recgym-net]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      retries: 10
+
+  # MLFLOW
+  mlflow:
+    build:
+      context: .
+      dockerfile: infra/mlflow.Dockerfile
+    container_name: recgym-mlflow
+    networks: [recgym-net]
+    depends_on:
+      - postgres
+      - minio
+    ports:
+      - "5050:5000"
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+
+  # PROMETHEUS
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: recgym-prometheus
+    networks: [recgym-net]
+    volumes:
+      - ./infra/prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  # TEMPO
+  tempo:
+    image: grafana/tempo:latest
+    container_name: recgym-tempo
+    networks: [recgym-net]
+    volumes:
+      - ./infra/tempo/config.yml:/etc/tempo/config.yml
+    ports:
+      - "3200:3200"
+    command: ["--config.file=/etc/tempo/config.yml"]
+
+  # LOKI
+  loki:
+    image: grafana/loki:2.9.2
+    container_name: recgym-loki
+    networks: [recgym-net]
+    volumes:
+      - ./infra/loki/config.yml:/etc/loki/config.yml
+      - ./infra/loki/data:/loki
+    ports:
+      - "3100:3100"
+
+  # PROMTAIL
+  promtail:
+    image: grafana/promtail:2.9.2
+    container_name: recgym-promtail
+    networks: [recgym-net]
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./infra/promtail/config.yml:/etc/promtail/config.yml
+    depends_on:
+      - loki
+
+  # OTEL COLLECTOR
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.103.0
+    container_name: recgym-otel-collector
+    networks: [recgym-net]
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./infra/otel/config.yaml:/etc/otel/config.yaml
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+
+  # GENERATOR SERVICE
+  generator:
+    build:
+      context: .
+      dockerfile: apps/generator/Dockerfile
+    container_name: recgym-generator
+    networks: [recgym-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    env_file:
+      - apps/generator/.env
+    environment:
+      PYTHONPATH: /app/src:/app/libs
+    volumes:
+      - ./infra/schemas:/app/infra/schemas:ro
+    command: ["python", "src/main.py"]
+    restart: unless-stopped
+
+# VOLUMES
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
