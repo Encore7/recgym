@@ -1,36 +1,50 @@
-import logging
+"""
+Bootstraps the generator service:
 
-from config import get_settings
-from core.models import GeneratorConfig
+- Initializes observability (logs, metrics, traces)
+- Registers Avro schemas
+- Ensures Kafka topics
+- Creates event generator instance
+"""
+
+import logging
+from typing import Final
+
+from core.config import get_settings
 from data.generator import EventGenerator
 from data.schemas import register_schemas
 from data.topics import ensure_topics
-from observability.instrumentation import init_observability
+from models.generator_config import GeneratorConfig
+
+from libs.observability.instrumentation import init_observability
 
 
 def bootstrap() -> EventGenerator:
-    """Initialize observability, topics, schemas, and return an event generator."""
-    cfg = get_settings()
-    log = logging.getLogger("bootstrap")
+    """
+    Initialize observability, schemas, topics, and event
+
+    Returns:
+        EventGenerator: A ready-to-use generator instance.
+    """
+    settings = get_settings()
+    log: Final = logging.getLogger("bootstrap")
 
     log.info("Starting generator service bootstrap")
 
-    # 1. Initialize observability (logs, metrics, traces)
+    # 1. Observability
     init_observability()
     log.info("Observability initialized")
 
-    # 2. Register schemas (idempotent)
-    schema_cfg = cfg.schema_config()
-    register_schemas(schema_cfg)
+    # 2. Schema registry
+    register_schemas(settings.schema_config())
     log.info("Schemas registered")
 
-    # 3. Ensure Kafka topics exist (idempotent)
-    kafka_cfg = cfg.kafka_config()
-    ensure_topics(kafka_cfg)
+    # 3. Kafka topics
+    ensure_topics(settings.kafka_config())
     log.info("Topics ensured")
 
-    # 4. Initialize event generator
-    event_gen = EventGenerator(GeneratorConfig())
+    # 4. Event generator
+    generator = EventGenerator(GeneratorConfig())
     log.info("Event generator ready")
 
-    return event_gen
+    return generator

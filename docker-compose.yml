@@ -208,10 +208,26 @@ services:
       - "4317:4317"
       - "4318:4318"
 
+  # GRAFANA
+  grafana:
+    image: grafana/grafana:latest
+    container_name: recgym-grafana
+    networks: [recgym-net]
+    depends_on:
+      - prometheus
+      - tempo
+      - loki
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: unless-stopped
+
   # GENERATOR SERVICE
   generator:
     build:
-      context: .
+      context: .         
       dockerfile: apps/generator/Dockerfile
     container_name: recgym-generator
     networks: [recgym-net]
@@ -225,7 +241,7 @@ services:
     env_file:
       - apps/generator/.env
     environment:
-      PYTHONPATH: /app/src:/app/libs
+      PYTHONPATH: /app/src:/app
     volumes:
       - ./infra/schemas:/app/infra/schemas:ro
     command: ["python", "src/main.py"]

@@ -1,25 +1,24 @@
-# Stage 1 – Builder
-FROM python:3.11-slim AS builder
-
-WORKDIR /app
-ENV PIP_NO_CACHE_DIR=1
-
-COPY pyproject.toml .
-RUN pip install --upgrade pip && pip wheel --wheel-dir /wheels -r <(pipdeptree --freeze) || true
-
-# Stage 2 – Runtime
 FROM python:3.11-slim
-WORKDIR /app
 
-# create non-root user
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1
+# IMPORTANT:
+ENV PYTHONPATH=/app/src:/app
+
+# Install dependencies
+COPY apps/generator/pyproject.toml ./pyproject.toml
+RUN pip install --upgrade pip && pip install .
+
+# Copy shared libs (observability etc)
+COPY libs ./libs
+
+# Copy generator service code
+COPY apps/generator/src ./src
+
+# Copy schemas
+COPY infra/schemas ./infra/schemas
+
 RUN addgroup --system app && adduser --system --ingroup app app
 USER app
 
-ENV PYTHONUNBUFFERED=1
-ENV PATH="/home/app/.local/bin:$PATH"
-
-COPY --from=builder /wheels /wheels
-RUN pip install --no-cache-dir /wheels/*
-
-COPY src/ ./src/
-CMD ["python", "-m", "src.main"]
+CMD ["python", "src/main.py"]
