@@ -2,65 +2,95 @@ import logging
 import signal
 import sys
 import time
+from typing import NoReturn
 
 from confluent_kafka import SerializingProducer
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
 from confluent_kafka.serialization import StringSerializer
+from core.bootstrap import bootstrap
+from core.config import get_settings
 
-from ..core.bootstrap import bootstrap
-from ..core.config import get_settings
-from ..observability.instrumentation import get_producer_instruments
-from ..observability.tracing import trace
+from libs.observability.instrumentation import get_producer_instruments
+from libs.observability.tracing import trace
 
 
 class KafkaEventProducer:
-    def __init__(self):
+    """
+    Kafka producer for streaming synthetic retail events.
+
+    Responsibilities:
+    - Bootstrap generator (topics, schemas, observability).
+    - Serialize events using Avro and Schema Registry.
+    - Produce records to Kafka with basic metrics instrumentation.
+    """
+
+    def __init__(self) -> None:
         self.settings = get_settings()
         self.event_gen = bootstrap()
         self.log = logging.getLogger("KafkaEventProducer")
 
-        # Observability counters
-        self._produced, self._failures, self._latency, self._backlog = (
-            get_producer_instruments()
-        )
-        self._running = True
+        # OTel metrics instruments (counters + histogram)
+        self._produced, self._failures, self._latency = get_producer_instruments()
 
-        # Schema Registry
+        self._running: bool = True
+
+        # Schema Registry client
         self._schema_registry_client = SchemaRegistryClient(
             {"url": self.settings.schema_registry_url}
         )
+
+        # Load Avro schema from infra/schemas
         schema_path = f"{self.settings.schema_dir}/RetailEvent.avsc"
-        with open(schema_path) as f:
-            schema_str = f.read()
+        try:
+            with open(schema_path, encoding="utf-8") as f:
+                schema_str = f.read()
+        except FileNotFoundError as exc:
+            self.log.exception(
+                "RetailEvent Avro schema file not found",
+                extra={"schema_path": schema_path},
+            )
+            raise SystemExit(1) from exc
 
-        avro_serializer = AvroSerializer(self._schema_registry_client, schema_str)
+        # Avro serializer for the event value
+        self._value_serializer = AvroSerializer(
+            schema_registry_client=self._schema_registry_client,
+            schema_str=schema_str,
+        )
 
-        # Kafka producer config
+        # Kafka producer
         self._producer = SerializingProducer(
             {
                 "bootstrap.servers": self.settings.kafka_bootstrap_servers,
                 "key.serializer": StringSerializer("utf_8"),
-                "value.serializer": avro_serializer,
+                "value.serializer": self._value_serializer,
+                "compression.type": "lz4",
                 "linger.ms": 50,
                 "batch.size": 32768,
-                "compression.type": "lz4",
             }
         )
 
-        # Handle graceful stop
+        # Graceful shutdown
         signal.signal(signal.SIGINT, self._stop)
         signal.signal(signal.SIGTERM, self._stop)
 
-    # Lifecycle
-    def _stop(self, *_):
+    def _stop(self, *_: object) -> NoReturn:
+        """
+        Signal handler to flush pending messages and exit cleanly.
+        """
         self.log.info("Shutdown signal received. Flushing pending messages.")
         self._running = False
-        self._producer.flush(10)
+        try:
+            self._producer.flush(10)
+        except Exception:
+            # We log but still exit – shutdown should not hang.
+            self.log.exception("Error while flushing producer during shutdown")
         sys.exit(0)
 
-    # Producer loop
     def run(self) -> None:
+        """
+        Main producer loop – streams events from EventGenerator into Kafka.
+        """
         self.log.info("Kafka producer started.")
         tracer = trace.get_tracer("recgym-producer")
 
@@ -68,7 +98,8 @@ class KafkaEventProducer:
             if not self._running:
                 break
 
-            start_time = time.perf_counter()
+            start = time.perf_counter()
+
             with tracer.start_as_current_span("produce_event"):
                 try:
                     self._producer.produce(
@@ -77,18 +108,25 @@ class KafkaEventProducer:
                         value=event.model_dump(),  # Pydantic → dict
                     )
                     self._produced.add(1)
-                except Exception as e:
-                    self.log.error("Produce error", extra={"error": str(e)})
+                except Exception as exc:
+                    self.log.error(
+                        "Produce error",
+                        extra={"error": str(exc), "topic": self.settings.kafka_topic},
+                    )
                     self._failures.add(1)
                 finally:
-                    latency_ms = (time.perf_counter() - start_time) * 1000
+                    latency_ms = (time.perf_counter() - start) * 1000
                     self._latency.record(latency_ms)
-                    self._backlog.set(self._producer.len())
 
-            # Poll delivery reports asynchronously
+            # Trigger delivery report callbacks
             self._producer.poll(0)
 
+        # Normal shutdown path if loop exits naturally
         self.log.info("Producer stopped cleanly.")
+        try:
+            self._producer.flush(10)
+        except Exception:
+            self.log.exception("Error during final producer flush")
 
 
 if __name__ == "__main__":

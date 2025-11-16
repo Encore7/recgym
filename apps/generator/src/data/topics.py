@@ -1,40 +1,60 @@
-from confluent_kafka.admin import AdminClient, NewTopic
+import logging
 
-from ..core.models import KafkaConfig
-from ..observability.logging import logging
+from confluent_kafka.admin import AdminClient, NewTopic
+from models.kafka_config import KafkaConfig
 
 
 def ensure_topics(cfg: KafkaConfig) -> None:
-    admin = AdminClient({"bootstrap.servers": cfg.bootstrap_servers})
+    """
+    Ensure that the configured Kafka topic exists.
+
+    This function is idempotent:
+    - If the topic exists → logs and returns.
+    - If missing → creates the topic with the given partitions and replication factor.
+    """
     logger = logging.getLogger(__name__)
+    admin = AdminClient({"bootstrap.servers": cfg.bootstrap_servers})
 
-    existing = admin.list_topics(timeout=10).topics.keys()
-    topics_to_create = []
+    # Fetch current topics
+    metadata = admin.list_topics(timeout=10)
+    existing = set(metadata.topics.keys())
 
-    if cfg.topic not in existing:
-        topics_to_create.append(
-            NewTopic(
-                cfg.topic,
-                num_partitions=cfg.num_partitions,
-                replication_factor=cfg.replication_factor,
-            )
+    if cfg.topic in existing:
+        logger.info(
+            "Kafka topic(s) already exist.",
+            extra={"topics": sorted(existing)},
         )
-
-    if not topics_to_create:
-        logger.info("Kafka topic(s) already exist.", extra={"topics": list(existing)})
         return
 
-    fs = admin.create_topics(topics_to_create)
-    for topic, f in fs.items():
+    # Topic needs to be created
+    new_topic = NewTopic(
+        cfg.topic,
+        num_partitions=cfg.num_partitions,
+        replication_factor=cfg.replication_factor,
+    )
+
+    logger.info(
+        "Creating Kafka topic",
+        extra={
+            "topic": cfg.topic,
+            "partitions": cfg.num_partitions,
+            "replication_factor": cfg.replication_factor,
+        },
+    )
+
+    futures = admin.create_topics([new_topic])
+
+    for topic, future in futures.items():
         try:
-            f.result()
+            future.result()
             logger.info("Created topic", extra={"topic": topic})
-        except Exception as e:
+        except Exception as exc:
+            # In local/dev it's okay if topic already exists due to race
             logger.error(
-                "Topic creation failed", extra={"topic": topic, "error": str(e)}
+                "Topic creation failed",
+                extra={"topic": topic, "error": str(exc)},
             )
 
 
 if __name__ == "__main__":
-    cfg = KafkaConfig()
-    ensure_topics(cfg)
+    ensure_topics(KafkaConfig())
