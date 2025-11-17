@@ -1,0 +1,15 @@
+project: recgym
+provider: local
+
+offline_store:
+  type: postgres
+  host: localhost
+  port: 5432
+  database: feature_repo
+  user: feast
+  password: feast
+
+online_store:
+  type: redis
+  host: localhost
+  port: 6379
