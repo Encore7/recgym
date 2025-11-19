@@ -140,7 +140,7 @@ services:
   mlflow:
     build:
       context: .
-      dockerfile: infra/mlflow.Dockerfile
+      dockerfile: apps/mlflow/Dockerfile
     container_name: recgym-mlflow
     networks: [recgym-net]
     depends_on:
@@ -223,6 +223,33 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
     restart: unless-stopped
+
+  # FEAST
+  feast:
+    build:
+      context: .
+      dockerfile: apps/features/Dockerfile
+    container_name: recgym-feast
+    networks: [recgym-net]
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./features/feast:/app/feast
+    command: ["feast", "apply", "--repo", "/app/feast"]
+
+  # DBT
+  dbt:
+    image: ghcr.io/dbt-labs/dbt-postgres:1.8.1
+    container_name: recgym-dbt
+    networks: [recgym-net]
+    volumes:
+      - ./features/dbt:/app/features/dbt
+    depends_on:
+      - postgres
+    environment:
+      DBT_PROFILES_DIR: /app/features/dbt
+
 
   # GENERATOR SERVICE
   generator:

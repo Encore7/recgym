@@ -1,15 +1,17 @@
 project: recgym
 provider: local
 
+registry: registry.db
+
 offline_store:
   type: postgres
-  host: localhost
+  host: postgres
   port: 5432
-  database: feature_repo
-  user: feast
-  password: feast
+  database: recgym
+  user: recgym
+  password: recgym
 
 online_store:
   type: redis
-  host: localhost
+  host: redis
   port: 6379
