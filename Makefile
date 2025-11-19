@@ -24,11 +24,20 @@ rebuild:
 	@docker compose -f $(COMPOSE_FILE) build --no-cache
 
 feast-apply:
-	@cd features/feast && feast apply
+	docker compose run --rm feast feast apply --repo /app/feast
 
 feast-materialize:
-	@cd features/feast && feast materialize-incremental $(shell date -Iseconds)
+	docker compose run --rm feast feast materialize-incremental $(shell date -Iseconds)
 
 feast-materialize-backfill:
-	@cd features/feast && feast materialize 2020-01-01T00:00:00Z $(shell date -Iseconds)
+	docker compose run --rm feast feast materialize 2020-01-01T00:00:00Z $(shell date -Iseconds)
+
+dbt-build:
+	docker compose run --rm dbt dbt build --project-dir /app/features/dbt
+
+dbt-run:
+	docker compose run --rm dbt dbt run --project-dir /app/features/dbt
+
+dbt-test:
+	docker compose run --rm dbt dbt test --project-dir /app/features/dbt
 
