@@ -60,3 +60,30 @@ def get_producer_instruments() -> Tuple[Counter, Counter, Histogram]:
     )
 
     return produced, failures, latency
+
+
+def get_consumer_instruments() -> Tuple[Counter, Counter, Histogram]:
+    """
+    OpenTelemetry instruments for Kafka consumers / ingestion.
+    """
+    meter = metrics.get_meter("recgym.consumer")
+
+    consumed = meter.create_counter(
+        name="retail_events_consumed",
+        description="Count of successfully consumed retail events",
+        unit="1",
+    )
+
+    failures = meter.create_counter(
+        name="retail_events_consume_failed",
+        description="Count of failed consume or decode operations",
+        unit="1",
+    )
+
+    flush_latency = meter.create_histogram(
+        name="raw_events_flush_latency_ms",
+        description="Latency of flushing ingested events to S3",
+        unit="ms",
+    )
+
+    return consumed, failures, flush_latency

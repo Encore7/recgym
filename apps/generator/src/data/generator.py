@@ -4,8 +4,9 @@ import uuid
 from datetime import datetime, timezone
 from typing import Generator, List, Sequence
 
-from models.events import DeviceType, EventType, PageType, RetailEvent
 from models.generator_config import GeneratorConfig
+
+from libs.models.events import DeviceType, EventType, PageType, RetailEvent
 
 
 class EventGenerator:
