@@ -238,19 +238,6 @@ services:
       - ./features/feast:/app/feast
     command: ["feast", "apply", "--repo", "/app/feast"]
 
-  # DBT
-  dbt:
-    image: ghcr.io/dbt-labs/dbt-postgres:1.8.1
-    container_name: recgym-dbt
-    networks: [recgym-net]
-    volumes:
-      - ./features/dbt:/app/features/dbt
-    depends_on:
-      - postgres
-    environment:
-      DBT_PROFILES_DIR: /app/features/dbt
-
-
   # GENERATOR SERVICE
   generator:
     build:
@@ -272,6 +259,27 @@ services:
     volumes:
       - ./infra/schemas:/app/infra/schemas:ro
     command: ["python", "src/main.py"]
+    restart: unless-stopped
+
+  # INGESTION SERVICE
+  ingestion:
+    build:
+      context: .
+      dockerfile: apps/ingestion/Dockerfile
+    container_name: recgym-ingestion
+    networks: [recgym-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    environment:
+      OTEL_SERVICE_NAME: recgym-ingestion
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     restart: unless-stopped
 
 # VOLUMES
