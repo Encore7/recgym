@@ -1,7 +1,14 @@
-from apps.ingestion.src.core.bootstrap import bootstrap
+"""
+Entry point for the Kafka → S3 ingestion service.
+"""
+
+from core.bootstrap import bootstrap
 
 
 def main() -> None:
+    """
+    Bootstrap and run the ingestion service.
+    """
     service = bootstrap()
     service.run()
 

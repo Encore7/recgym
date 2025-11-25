@@ -5,14 +5,16 @@ This sink buffers events in memory and periodically flushes them
 as Parquet files to S3/MinIO, partitioned by date and hour.
 
 Pattern:
-- add(event: dict)  -> buffer
-- flush()           -> write Parquet → S3
+- append(event: RetailEvent)  -> buffer
+- flush()                     -> write Parquet → S3
 """
+
+from __future__ import annotations
 
 import io
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List
 
@@ -20,18 +22,31 @@ import boto3
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from libs.models.events import RetailEvent
+from libs import RetailEvent
 
 
 @dataclass
 class S3SinkConfig:
+    """
+    Configuration for S3EventSink.
+
+    Attributes:
+        endpoint_url: S3/MinIO endpoint URL.
+        access_key: Access key for S3/MinIO.
+        secret_key: Secret key for S3/MinIO.
+        bucket: Target bucket for writes.
+        batch_size: Max in-memory buffer size before flush.
+        flush_interval_sec: Max time between flushes.
+        region: AWS-style region name (MinIO typically accepts "us-east-1").
+    """
+
     endpoint_url: str
     access_key: str
     secret_key: str
     bucket: str
-    region: str
     batch_size: int
     flush_interval_sec: float
+    region: str = "us-east-1"
 
 
 class S3EventSink:
@@ -43,10 +58,17 @@ class S3EventSink:
     """
 
     def __init__(self, cfg: S3SinkConfig, logger: logging.Logger) -> None:
+        """
+        Initialize the S3 sink.
+
+        Args:
+            cfg: S3 sink configuration.
+            logger: Logger instance for structured logging.
+        """
         self._cfg = cfg
         self._log = logger
         self._buffer: List[RetailEvent] = []
-        self._last_flush = time.time()
+        self._last_flush: float = time.time()
 
         self._s3 = boto3.client(
             "s3",
@@ -65,13 +87,26 @@ class S3EventSink:
         try:
             self._s3.head_bucket(Bucket=self._cfg.bucket)
             self._log.info("S3 bucket exists", extra={"bucket": self._cfg.bucket})
-        except Exception:
-            self._log.info("Creating S3 bucket", extra={"bucket": self._cfg.bucket})
-            self._s3.create_bucket(Bucket=self._cfg.bucket)
+        except Exception as exc:  # noqa: BLE001
+            self._log.info(
+                "Creating S3 bucket",
+                extra={"bucket": self._cfg.bucket, "reason": str(exc)},
+            )
+            try:
+                self._s3.create_bucket(Bucket=self._cfg.bucket)
+            except Exception as create_exc:  # noqa: BLE001
+                self._log.exception(
+                    "Failed to create S3 bucket",
+                    extra={"bucket": self._cfg.bucket},
+                )
+                raise RuntimeError("Unable to ensure S3 bucket.") from create_exc
 
     def append(self, event: RetailEvent) -> None:
         """
         Add one event to the in-memory buffer and flush if needed.
+
+        Args:
+            event: A single RetailEvent instance.
         """
         self._buffer.append(event)
         now = time.time()
@@ -92,14 +127,17 @@ class S3EventSink:
             return
 
         start = time.perf_counter()
+        count = len(self._buffer)
+
         try:
-            # Convert to Arrow table
-            records = [e.model_dump() for e in self._buffer]
+            records = [event.model_dump() for event in self._buffer]
             table = pa.Table.from_pylist(records)
 
-            # Partition path based on current UTC time
             now = datetime.now(tz=timezone.utc)
-            key_prefix = f"raw/year={now.year}/month={now.month:02d}/day={now.day:02d}/hour={now.hour:02d}"
+            key_prefix = (
+                f"raw/year={now.year}/month={now.month:02d}/"
+                f"day={now.day:02d}/hour={now.hour:02d}"
+            )
             object_key = f"{key_prefix}/part-{int(now.timestamp())}.parquet"
 
             buf = io.BytesIO()
@@ -115,12 +153,12 @@ class S3EventSink:
             self._log.info(
                 "Flushed events to S3",
                 extra={
-                    "count": len(self._buffer),
+                    "count": count,
                     "bucket": self._cfg.bucket,
                     "key": object_key,
                 },
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             self._log.exception(
                 "Failed to flush events to S3",
                 extra={"error": str(exc)},
@@ -131,5 +169,5 @@ class S3EventSink:
             latency_ms = (time.perf_counter() - start) * 1000
             self._log.debug(
                 "S3 flush latency",
-                extra={"latency_ms": latency_ms},
+                extra={"latency_ms": latency_ms, "count": count},
             )

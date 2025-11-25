@@ -1,17 +1,27 @@
-import logging
+"""
+Bootstrap for the Kafka → S3 ingestion service.
+
+Responsibilities:
+- Initialize observability (logs, traces, metrics)
+- Construct the KafkaToS3IngestionService instance
+"""
+
 from typing import Final
 
-from apps.ingestion.src.data.consumer import KafkaToS3IngestionService
-from libs.observability.instrumentation import init_observability
+from libs.observability import get_logger, init_observability
+from ingestion.src.data.consumer import KafkaToS3IngestionService
 
 
 def bootstrap() -> KafkaToS3IngestionService:
     """
-    Initialize observability and return an ingestion service instance.
+    Initialize observability and return a ready ingestion service.
+
+    Returns:
+        KafkaToS3IngestionService: Configured service instance.
     """
-    init_observability()
-    log: Final = logging.getLogger("ingestion-bootstrap")
+    init_observability(service_name="recgym-ingestion")
+    log = get_logger("ingestion-bootstrap")
     log.info("Bootstrapping Kafka → S3 ingestion service")
     service = KafkaToS3IngestionService()
-    log.info("Ingestion service ready")
+    log.info("Ingestion service initialized")
     return service

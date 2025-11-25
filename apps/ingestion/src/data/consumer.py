@@ -1,19 +1,31 @@
-import logging
+"""
+Kafka → S3 ingestion service.
+
+Consumes Avro-encoded RetailEvent messages from Kafka and writes them
+as partitioned Parquet files to S3/MinIO, with OpenTelemetry metrics
+and traces.
+"""
+
+from __future__ import annotations
+
 import signal
 import sys
 import time
 from typing import NoReturn
 
 from confluent_kafka import DeserializingConsumer
-from confluent_kafka.schema_registry import SchemaRegistryClient
+from confluent_kafka.schema_registry import Schema, SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroDeserializer
 from confluent_kafka.serialization import StringDeserializer
-from opentelemetry import trace
 
-from apps.ingestion.src.core.config import get_settings
-from apps.ingestion.src.data.s3_sink import S3EventSink, S3SinkConfig
-from libs.models.events import RetailEvent
-from libs.observability.instrumentation import get_consumer_instruments
+from libs import RetailEvent
+from libs.config import AppConfig
+from libs.observability import (
+    get_consumer_instruments,
+    get_logger,
+    get_tracer,
+)
+from .s3_sink import S3EventSink, S3SinkConfig
 
 
 class KafkaToS3IngestionService:
@@ -28,88 +40,104 @@ class KafkaToS3IngestionService:
     """
 
     def __init__(self) -> None:
-        self.settings = get_settings()
-        self.log = logging.getLogger("KafkaToS3IngestionService")
+        self._config = AppConfig.load()
+        self._logger = get_logger("KafkaToS3IngestionService")
+        self._tracer = get_tracer("recgym.ingestion")
 
         # Metrics
-        self._consumed, self._failures, self._flush_latency = get_consumer_instruments()
-
-        # Schema registry
-        self._schema_registry_client = SchemaRegistryClient(
-            {"url": self.settings.schema_registry_url}
+        self._consumed_counter, self._failure_counter, self._flush_latency_hist = (
+            get_consumer_instruments()
         )
 
-        schema_path = f"{self.settings.schema_dir}/RetailEvent.avsc"
+        # Schema registry client
+        self._schema_registry_client = SchemaRegistryClient(
+            {"url": self._config.kafka.schema_registry_url}
+        )
+
+        # Load Avro schema
+        schema_path = "infra/schemas/RetailEvent.avsc"
         try:
             with open(schema_path, encoding="utf-8") as f:
                 schema_str = f.read()
         except FileNotFoundError as exc:
-            self.log.exception(
+            self._logger.exception(
                 "RetailEvent Avro schema file not found",
                 extra={"schema_path": schema_path},
             )
             raise SystemExit(1) from exc
+        except OSError as exc:
+            self._logger.exception(
+                "Error reading Avro schema file",
+                extra={"schema_path": schema_path},
+            )
+            raise SystemExit(1) from exc
+
+        schema = Schema(schema_str, "AVRO")
 
         def _to_retail_event(obj: dict, _: object) -> RetailEvent:
             return RetailEvent(**obj)
 
         self._value_deserializer = AvroDeserializer(
             schema_registry_client=self._schema_registry_client,
-            schema_str=schema_str,
+            schema_str=schema.schema_str,
             from_dict=_to_retail_event,
         )
 
         # Kafka consumer
         self._consumer = DeserializingConsumer(
             {
-                "bootstrap.servers": self.settings.kafka_bootstrap_servers,
+                "bootstrap.servers": self._config.kafka.bootstrap_servers,
                 "key.deserializer": StringDeserializer("utf_8"),
                 "value.deserializer": self._value_deserializer,
-                "group.id": self.settings.kafka_group_id,
+                "group.id": self._config.kafka.consumer_group,
                 "auto.offset.reset": "earliest",
                 "enable.auto.commit": True,
             }
         )
 
-        # S3 sink
+        # S3 sink config
         sink_cfg = S3SinkConfig(
-            endpoint_url=self.settings.s3_endpoint_url,
-            access_key=self.settings.s3_access_key,
-            secret_key=self.settings.s3_secret_key,
-            bucket=self.settings.s3_bucket,
-            region=self.settings.s3_region,
-            batch_size=self.settings.batch_size,
-            flush_interval_sec=self.settings.flush_interval_sec,
+            endpoint_url=self._config.s3.endpoint_url,
+            access_key=self._config.s3.access_key,
+            secret_key=self._config.s3.secret_key,
+            bucket=self._config.s3.bucket,
+            batch_size=self._config.ingestion.batch_size,
+            flush_interval_sec=self._config.ingestion.flush_interval_sec,
         )
-        self._sink = S3EventSink(sink_cfg, logger=self.log)
+        self._sink = S3EventSink(cfg=sink_cfg, logger=self._logger)
 
-        self._running = True
+        self._running: bool = True
 
-        # Signal handlers
+        # Signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self._stop)
         signal.signal(signal.SIGTERM, self._stop)
 
-        # Tracer
-        self._tracer = trace.get_tracer("recgym.ingestion")
-
     def _stop(self, *_: object) -> NoReturn:
-        self.log.info("Shutdown signal received. Closing consumer.")
+        """
+        Signal handler to flush pending data and close the consumer.
+        """
+        self._logger.info("Shutdown signal received. Stopping ingestion service.")
         self._running = False
         try:
             self._sink.flush()
             self._consumer.close()
-        except Exception:
-            self.log.exception("Error during ingestion shutdown")
+        except Exception as exc:  # noqa: BLE001
+            self._logger.exception(
+                "Error during ingestion shutdown",
+                extra={"error": str(exc)},
+            )
         sys.exit(0)
 
     def run(self) -> None:
         """
-        Main consumption loop.
+        Main consumption loop: poll Kafka, deserialize messages, write to S3.
         """
-        self._consumer.subscribe([self.settings.kafka_topic])
-        self.log.info(
+        topic = self._config.kafka.input_topic
+        self._consumer.subscribe([topic])
+
+        self._logger.info(
             "Ingestion service started",
-            extra={"topic": self.settings.kafka_topic},
+            extra={"topic": topic, "bootstrap": self._config.kafka.bootstrap_servers},
         )
 
         while self._running:
@@ -119,35 +147,35 @@ class KafkaToS3IngestionService:
                     continue
 
                 if msg.error():
-                    self.log.error(
+                    self._logger.error(
                         "Kafka message error",
                         extra={"error": str(msg.error())},
                     )
-                    self._failures.add(1)
+                    self._failure_counter.add(1)
                     continue
 
                 start = time.perf_counter()
                 try:
-                    event: RetailEvent = msg.value()
+                    event: RetailEvent | None = msg.value()
                     if event is None:
-                        self.log.error("Deserialized event is None")
-                        self._failures.add(1)
+                        self._logger.error("Deserialized event is None")
+                        self._failure_counter.add(1)
                         continue
 
                     self._sink.append(event)
-                    self._consumed.add(1)
-                except Exception as exc:
-                    self.log.exception(
+                    self._consumed_counter.add(1)
+                except Exception as exc:  # noqa: BLE001
+                    self._logger.exception(
                         "Failed to process message",
                         extra={"error": str(exc)},
                     )
-                    self._failures.add(1)
+                    self._failure_counter.add(1)
                 finally:
                     latency_ms = (time.perf_counter() - start) * 1000
-                    # We treat "flush latency" as a proxy for end-to-end processing latency
-                    self._flush_latency.record(latency_ms)
+                    # We record processing latency as a proxy for flush latency here.
+                    self._flush_latency_hist.record(latency_ms)
 
-        # normal exit path
-        self.log.info("Ingestion loop stopped, flushing sink.")
+        # Normal exit path
+        self._logger.info("Ingestion loop stopped, flushing sink.")
         self._sink.flush()
         self._consumer.close()
