@@ -1,10 +1,10 @@
 """
 Structured JSON logging with OpenTelemetry Log Exporter.
 
-This module attaches:
+This module configures:
 - stdout JSON logs
-- OTel LogProcessor + LogExporter
-- Trace/span correlation
+- OpenTelemetry log pipeline (LoggerProvider + LogExporter)
+- Trace/span correlation in every log line
 """
 
 import json
@@ -22,15 +22,28 @@ from opentelemetry.semconv.attributes.service_attributes import SERVICE_NAME
 from libs.observability.otlp_exporter import build_log_exporter
 
 SERVICE_NAME_VALUE: str = os.getenv("OTEL_SERVICE_NAME", "recgym-service")
-ENVIRONMENT: str = os.getenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment=local")
+ENVIRONMENT: str = os.getenv(
+    "OTEL_RESOURCE_ATTRIBUTES",
+    "deployment.environment=local",
+)
 
 
 class JsonTraceFormatter(logging.Formatter):
     """
     JSON formatter including trace_id and span_id.
+
+    The formatter emits a single-line JSON object with:
+        - level
+        - logger
+        - message
+        - time
+        - trace_id (hex) if available
+        - span_id (hex) if available
+        - service
+        - additional contextual fields from the LogRecord.
     """
 
-    def format(self, record: logging.LogRecord) -> str:  # type: ignore[override]
+    def format(self, record: logging.LogRecord) -> str:
         span = trace.get_current_span()
         span_ctx = span.get_span_context() if span else None
 
@@ -48,31 +61,34 @@ class JsonTraceFormatter(logging.Formatter):
             "service": SERVICE_NAME_VALUE,
         }
 
-        # Include exception info if present
         if record.exc_info:
             payload["exc_info"] = self.formatException(record.exc_info)
 
-        # Include additional structured fields
-        for k, v in record.__dict__.items():
-            if k.startswith("_") or k in payload or k in ("args", "msg"):
+        # Include additional structured fields if they are JSON-serializable
+        for key, value in record.__dict__.items():
+            if key.startswith("_") or key in payload or key in ("args", "msg"):
                 continue
             try:
-                json.dumps({k: v})
-                payload[k] = v
+                json.dumps({key: value})
             except Exception:
-                pass
+                continue
+            payload[key] = value
 
         return json.dumps(payload, separators=(",", ":"))
 
 
 def init_logging(level: int = logging.INFO) -> None:
     """
-    Configure root logger with:
-    - JSON stdout logging
-    - OTel log exporter
-    - Trace correlation
-    """
+    Configure the root logger for the current process.
 
+    This sets up:
+        - JSON stdout logger
+        - OpenTelemetry log pipeline via OTLP
+        - Trace correlation via LoggingHandler
+
+    Args:
+        level: Minimum log level for the root logger.
+    """
     stdout_handler = logging.StreamHandler(sys.stdout)
     stdout_handler.setFormatter(JsonTraceFormatter())
 
@@ -82,7 +98,11 @@ def init_logging(level: int = logging.INFO) -> None:
     root.setLevel(level)
     root.propagate = False
 
-    attrs = dict(kv.split("=", 1) for kv in ENVIRONMENT.split(",") if "=" in kv)
+    attrs = {
+        kv.split("=", 1)[0]: kv.split("=", 1)[1]
+        for kv in ENVIRONMENT.split(",")
+        if "=" in kv
+    }
     resource = Resource.create({SERVICE_NAME: SERVICE_NAME_VALUE, **attrs})
 
     logger_provider = LoggerProvider(resource=resource)
@@ -90,6 +110,21 @@ def init_logging(level: int = logging.INFO) -> None:
         BatchLogRecordProcessor(build_log_exporter())
     )
 
-    # OpenTelemetry log handler
-    handler = LoggingHandler(level=level, logger_provider=logger_provider)
-    root.addHandler(handler)
+    # OpenTelemetry log handler for root logger
+    otel_handler = LoggingHandler(level=level, logger_provider=logger_provider)
+    root.addHandler(otel_handler)
+
+
+def get_logger(name: str | None = None) -> logging.Logger:
+    """
+    Get a module- or service-level logger.
+
+    This helper is the canonical way for application code to obtain a logger.
+
+    Args:
+        name: Optional logger name. If None, the root logger is returned.
+
+    Returns:
+        A configured Logger instance.
+    """
+    return logging.getLogger(name)

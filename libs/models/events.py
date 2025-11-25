@@ -1,9 +1,12 @@
 """
 Retail event model + supporting enums.
+
+These models are shared between generator, ingestion, and downstream
+feature pipelines. They define the typed contract for a single retail event.
 """
 
 from enum import Enum
-from typing import List, Optional
+from typing import ClassVar, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -28,7 +31,11 @@ class PageType(str, Enum):
 
 
 class RetailEvent(BaseModel):
-    """Typed retail event used by the generator."""
+    """
+    Typed retail event used by the generator and ingestion components.
+
+    All timestamps are expressed as milliseconds since UNIX epoch.
+    """
 
     user_id: str
     session_id: str
@@ -39,9 +46,9 @@ class RetailEvent(BaseModel):
     device: DeviceType
     page: PageType
     referrer: Optional[str] = None
-    ts: int  # milliseconds
+    ts: int  # milliseconds since UNIX epoch
 
-    model_config = {
+    model_config: ClassVar[Dict[str, object]] = {
         "json_schema_extra": {
             "example": {
                 "user_id": "u_12",
