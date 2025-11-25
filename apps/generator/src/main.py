@@ -1,11 +1,21 @@
+"""
+Entrypoint for the generator service.
+"""
+
 import logging
 
-from data.producer import KafkaEventProducer
+from apps.generator.src.core.bootstrap import build_producer
+from libs.observability.instrumentation import init_observability
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
-    producer = KafkaEventProducer()
+    """
+    Main entrypoint for the generator microservice.
+    Initializes observability and runs the Kafka producer.
+    """
+    init_observability(level=logging.INFO)
+
+    producer = build_producer()
     producer.run()
 
 

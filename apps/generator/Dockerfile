@@ -1,21 +1,28 @@
+
 FROM python:3.11-slim
 
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app/src:/app" \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /app
-ENV PYTHONUNBUFFERED=1
-# IMPORTANT:
-ENV PYTHONPATH=/app/src:/app
 
-# Install dependencies
-COPY apps/generator/pyproject.toml ./pyproject.toml
-RUN pip install --upgrade pip && pip install .
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    librdkafka-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copy shared libs (observability etc)
+COPY pyproject.toml poetry.lock* ./
+
+RUN pip install --upgrade pip \
+    && pip install poetry \
+    && poetry config virtualenvs.create false \
+    && poetry install --no-interaction --no-ansi
+
 COPY libs ./libs
 
-# Copy generator service code
 COPY apps/generator/src ./src
 
-# Copy schemas
 COPY infra/schemas ./infra/schemas
 
 RUN addgroup --system app && adduser --system --ingroup app app

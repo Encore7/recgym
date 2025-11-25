@@ -1,71 +1,142 @@
 """
-Application settings for the recgym-generator service.
+Service-specific configuration for the generator.
 
-Provides:
-- Typed, validated environment configuration
-- Accessors for Kafka + Schema Registry configs
-- Singleton settings loader
+This module ONLY handles:
+- Synthetic event generation settings (user/item counts, session length, etc.)
+- Kafka + Schema Registry runtime parameters needed by this service
+
+It reads from the ROOT .env using namespaced keys:
+
+    GENERATOR__USER_COUNT=100
+    GENERATOR__ITEM_COUNT=1000
+    GENERATOR__SESSION_LENGTH_MIN=2
+    GENERATOR__SESSION_LENGTH_MAX=6
+    GENERATOR__BASE_EVENT_DELAY_SEC=0.5
+    GENERATOR__SCHEMA_DIR=/app/infra/schemas
+
+    KAFKA__BOOTSTRAP_SERVERS=kafka:9092
+    KAFKA__INPUT_TOPIC=events_raw
+    KAFKA__SCHEMA_REGISTRY_URL=http://schema-registry:8081
 """
 
 from functools import lru_cache
+from typing import List, Optional
 
-from models.kafka_config import KafkaConfig
-from models.schema_config import SchemaRegistryConfig
 from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
-class AppSettings(BaseSettings):
+class GeneratorSettings(BaseSettings):
     """
-    Top-level configuration for the generator service.
-    Loaded from environment variables and `.env` file.
+    Settings controlling synthetic event generation.
+
+    Values come from environment variables prefixed with `GENERATOR__`.
     """
 
-    # General metadata
-    service_name: str = Field(default="recgym-generator")
-    environment: str = Field(default="local")
+    user_count: int = Field(default=100, ge=1)
+    item_count: int = Field(default=1000, ge=1)
 
-    # Kafka settings
-    kafka_bootstrap_servers: str = Field(default="kafka:9092")
-    kafka_topic: str = Field(default="events_raw")
-    kafka_partitions: int = Field(default=3)
-    kafka_replication_factor: int = Field(default=1)
+    session_length_min: int = Field(default=2, ge=1)
+    session_length_max: int = Field(default=6, ge=1)
 
-    # Schema registry
-    schema_registry_url: str = Field(default="http://schema-registry:8081")
-    schema_dir: str = Field(default="infra/schemas")
+    base_event_delay_sec: float = Field(default=0.5, ge=0.0)
 
-    # Observability
-    otel_collector_endpoint: str = Field(default="http://otel-collector:4317")
+    view_weight: float = Field(default=0.85, ge=0.0)
+    add_to_cart_weight: float = Field(default=0.10, ge=0.0)
+    purchase_weight: float = Field(default=0.05, ge=0.0)
+
+    categories: List[str] = Field(
+        default_factory=lambda: ["Electronics", "Fashion", "Books", "Home"]
+    )
+    referrers: List[Optional[str]] = Field(
+        default_factory=lambda: ["campaign_1", "campaign_2", None]
+    )
+
+    price_min: float = Field(default=5.0)
+    price_max: float = Field(default=200.0)
+
+    schema_dir: str = Field(
+        default="/app/infra/schemas",
+        description="Directory containing Avro schema files for this service.",
+    )
 
     class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
+        env_prefix = "GENERATOR__"
         case_sensitive = False
 
-    def kafka_config(self) -> KafkaConfig:
-        """Return a typed KafkaConfig object."""
-        return KafkaConfig(
-            bootstrap_servers=self.kafka_bootstrap_servers,
-            topic=self.kafka_topic,
-            num_partitions=self.kafka_partitions,
-            replication_factor=self.kafka_replication_factor,
-        )
 
-    def schema_config(self) -> SchemaRegistryConfig:
-        """Return a typed SchemaRegistryConfig object."""
-        return SchemaRegistryConfig(
-            url=self.schema_registry_url,
-            schema_dir=self.schema_dir,
-        )
+class KafkaSettings(BaseSettings):
+    """
+    Kafka-specific settings for the generator producer.
+
+    Values are read directly from environment variables:
+
+    - KAFKA__BOOTSTRAP_SERVERS
+    - KAFKA__INPUT_TOPIC
+    """
+
+    bootstrap_servers: str = Field(
+        default="kafka:9092",
+        description="Kafka bootstrap servers as host:port list.",
+        env="KAFKA__BOOTSTRAP_SERVERS",
+    )
+    topic: str = Field(
+        default="events_raw",
+        description="Kafka topic to which synthetic events are produced.",
+        env="KAFKA__INPUT_TOPIC",
+    )
+
+    class Config:
+        case_sensitive = False
+
+
+class SchemaRegistrySettings(BaseSettings):
+    """
+    Schema Registry settings for Avro-based serialization.
+
+    Values are read from:
+
+    - KAFKA__SCHEMA_REGISTRY_URL
+    - GENERATOR__SCHEMA_DIR
+    """
+
+    url: str = Field(
+        default="http://schema-registry:8081",
+        env="KAFKA__SCHEMA_REGISTRY_URL",
+        description="Schema Registry URL.",
+    )
+    schema_dir: str = Field(
+        default="/app/infra/schemas",
+        env="GENERATOR__SCHEMA_DIR",
+        description="Directory containing Avro schema files.",
+    )
+
+    class Config:
+        case_sensitive = False
 
 
 @lru_cache()
-def get_settings() -> AppSettings:
+def get_generator_settings() -> GeneratorSettings:
     """
-    Cached singleton accessor for application settings.
+    Cached accessor for GeneratorSettings.
 
     Returns:
-        AppSettings: Typed settings model.
+        GeneratorSettings: validated generator configuration.
     """
-    return AppSettings()
+    return GeneratorSettings()
+
+
+@lru_cache()
+def get_kafka_settings() -> KafkaSettings:
+    """
+    Cached accessor for KafkaSettings.
+    """
+    return KafkaSettings()
+
+
+@lru_cache()
+def get_schema_registry_settings() -> SchemaRegistrySettings:
+    """
+    Cached accessor for SchemaRegistrySettings.
+    """
+    return SchemaRegistrySettings()

@@ -1,50 +1,37 @@
 """
-Bootstraps the generator service:
+Bootstrap wiring for the generator service.
 
-- Initializes observability (logs, metrics, traces)
-- Registers Avro schemas
-- Ensures Kafka topics
-- Creates event generator instance
+Responsible for:
+- Initializing configuration objects
+- Constructing the KafkaEventProducer with dependencies
 """
 
-import logging
 from typing import Final
 
-from core.config import get_settings
-from data.generator import EventGenerator
-from data.schemas import register_schemas
-from data.topics import ensure_topics
-from models.generator_config import GeneratorConfig
+from apps.generator.src.core.config import (
+    GeneratorSettings,
+    KafkaSettings,
+    SchemaRegistrySettings,
+    get_generator_settings,
+    get_kafka_settings,
+    get_schema_registry_settings,
+)
+from apps.generator.src.infra.producer import KafkaEventProducer
 
-from libs.observability.instrumentation import init_observability
 
-
-def bootstrap() -> EventGenerator:
+def build_producer() -> KafkaEventProducer:
     """
-    Initialize observability, schemas, topics, and event
+    Build a fully wired KafkaEventProducer instance.
 
     Returns:
-        EventGenerator: A ready-to-use generator instance.
+        KafkaEventProducer: Ready-to-run producer instance.
     """
-    settings = get_settings()
-    log: Final = logging.getLogger("bootstrap")
+    generator_cfg: Final[GeneratorSettings] = get_generator_settings()
+    kafka_cfg: Final[KafkaSettings] = get_kafka_settings()
+    schema_cfg: Final[SchemaRegistrySettings] = get_schema_registry_settings()
 
-    log.info("Starting generator service bootstrap")
-
-    # 1. Observability
-    init_observability()
-    log.info("Observability initialized")
-
-    # 2. Schema registry
-    register_schemas(settings.schema_config())
-    log.info("Schemas registered")
-
-    # 3. Kafka topics
-    ensure_topics(settings.kafka_config())
-    log.info("Topics ensured")
-
-    # 4. Event generator
-    generator = EventGenerator(GeneratorConfig())
-    log.info("Event generator ready")
-
-    return generator
+    return KafkaEventProducer(
+        generator_cfg=generator_cfg,
+        kafka_cfg=kafka_cfg,
+        schema_cfg=schema_cfg,
+    )
