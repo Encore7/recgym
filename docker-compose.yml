@@ -241,7 +241,7 @@ services:
   # GENERATOR SERVICE
   generator:
     build:
-      context: .         
+      context: .
       dockerfile: apps/generator/Dockerfile
     container_name: recgym-generator
     networks: [recgym-net]
@@ -253,9 +253,11 @@ services:
       otel-collector:
         condition: service_started
     env_file:
-      - apps/generator/.env
+      - .env
     environment:
       PYTHONPATH: /app/src:/app
+      OTEL_SERVICE_NAME: recgym-generator
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     volumes:
       - ./infra/schemas:/app/infra/schemas:ro
     command: ["python", "src/main.py"]
@@ -277,6 +279,8 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
+    env_file:
+      - .env
     environment:
       OTEL_SERVICE_NAME: recgym-ingestion
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
