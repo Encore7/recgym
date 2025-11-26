@@ -64,9 +64,10 @@ make down
 | 0 | Infrastructure + Observability | ✅ Completed |
 | 1 | Kafka + Schema Registry + Synthetic Event Generator | ✅ Completed |
 | 2 | Feature Store (Feast) + Streaming Flink Jobs | 🔜 |
-| 3 | Modeling (Two-Tower + LightGBM Re-ranker) | ⏳ |
-| 4 | FastAPI Serving + Auth + Monitoring | ⏳ |
-| 5 | Drift Detection + Bandits + Canary Deploys | ⏳ |
+| 3 | Feature Store (Feast) + Batch Spark Jobs | 🔜 |
+| 4 | Modeling (Two-Tower + LightGBM Re-ranker) and Training pipeline | ⏳ |
+| 5 | FastAPI Serving + Auth + Monitoring | ⏳ |
+| 6 | Drift Detection + Bandits + Canary Deploys | ⏳ |
 
 ---
 

@@ -2,15 +2,13 @@
 Global configuration system for all recgym services.
 
 This module provides:
-- Strongly typed Pydantic configuration models (Kafka, S3, OTEL, Service, Ingestion)
+- Strongly typed Pydantic configuration models (Kafka, S3, Redis, OTEL, Service, Ingestion)
 - Automatic loading from environment variables + .env file
 - A single `AppConfig` object that every service should import
 
 Usage:
     from libs.config import AppConfig
-
     config = AppConfig.load()
-    config.kafka.bootstrap_servers
 """
 
 from __future__ import annotations
@@ -26,19 +24,26 @@ PROJECT_ROOT: Path = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_PATH: Path = PROJECT_ROOT / ".env"
 
 
+# KAFKA
 class KafkaConfig(BaseSettings):
     """Kafka configuration for producers and consumers."""
 
-    # Defaults aligned with docker-compose (kafka on 9092, topic=events_raw)
     bootstrap_servers: str = Field(default="kafka:9092")
     schema_registry_url: str = Field(default="http://schema-registry:8081")
+
+    # Topics (shared defaults)
     input_topic: str = Field(default="events_raw")
     output_topic: str = Field(default="raw-events")
     consumer_group: str = Field(default="recgym-consumer")
 
+    # Realtime feature topics (used by realtime + rt-bridge + API)
+    user_feature_topic: str = Field(default="user_features_rt")
+    item_feature_topic: str = Field(default="item_features_rt")
+
     model_config = SettingsConfigDict(extra="ignore")
 
 
+# S3 (MinIO)
 class S3Config(BaseSettings):
     """S3/MinIO configuration used by ingestion pipelines."""
 
@@ -50,6 +55,23 @@ class S3Config(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
 
+# REDIS (GLOBAL ONLINE STORE)
+class RedisConfig(BaseSettings):
+    """Global Redis online feature store settings."""
+
+    host: str = Field(default="redis")
+    port: int = Field(default=6379)
+    db: int = Field(default=0)
+    ttl_sec: int = Field(default=3600)
+
+    # Key prefixes for online feature snapshots
+    user_prefix: str = Field(default="user_features_rt:")
+    item_prefix: str = Field(default="item_features_rt:")
+
+    model_config = SettingsConfigDict(extra="ignore")
+
+
+# OTEL
 class OTELConfig(BaseSettings):
     """OpenTelemetry configuration shared across all services."""
 
@@ -60,6 +82,7 @@ class OTELConfig(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
 
+# GENERIC SERVICE CONFIG
 class ServiceConfig(BaseSettings):
     """
     Generic service-level configuration.
@@ -74,11 +97,10 @@ class ServiceConfig(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
 
+# INGESTION SETTINGS
 class IngestionConfig(BaseSettings):
     """
-    Ingestion-specific configuration.
-
-    Controls batching behaviour for Kafka → S3 sink.
+    Ingestion-specific configuration for Kafka → S3 sink.
     """
 
     batch_size: int = Field(default=5_000)
@@ -87,21 +109,18 @@ class IngestionConfig(BaseSettings):
     model_config = SettingsConfigDict(extra="ignore")
 
 
+# ROOT CONFIG OBJECT
 class AppConfig(BaseSettings):
     """
     Unified configuration object combining all sub-configs.
 
     Services must call:
         config = AppConfig.load()
-
-    This ensures:
-    - .env file is loaded automatically (if present)
-    - environment variable overrides are applied on top
-    - validation errors fail fast with a clear message
     """
 
     kafka: KafkaConfig = Field(default_factory=KafkaConfig)
     s3: S3Config = Field(default_factory=S3Config)
+    redis: RedisConfig = Field(default_factory=RedisConfig)
     otel: OTELConfig = Field(default_factory=OTELConfig)
     service: ServiceConfig = Field(default_factory=ServiceConfig)
     ingestion: IngestionConfig = Field(default_factory=IngestionConfig)
@@ -111,17 +130,15 @@ class AppConfig(BaseSettings):
         extra="ignore",
     )
 
+    # Singleton loader
     @classmethod
     @lru_cache(maxsize=1)
     def load(cls) -> "AppConfig":
         """
         Load configuration from:
-        - .env file (root-level)
+        - root `.env`
         - environment variables
         - defaults
-
-        Returns:
-            A fully validated AppConfig instance.
         """
         try:
             env_file = str(DEFAULT_ENV_PATH) if DEFAULT_ENV_PATH.exists() else None

@@ -3,10 +3,16 @@ networks:
   recgym-net:
     driver: bridge
 
+# VOLUMES
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
 # SERVICES
 services:
 
-  # POSTGRES
+  # POSTGRES (Feast Offline Store)
   postgres:
     image: postgres:15
     container_name: recgym-postgres
@@ -26,7 +32,7 @@ services:
       timeout: 5s
       retries: 10
 
-  # REDIS
+  # REDIS (Feast Online Store)
   redis:
     image: redis:7
     container_name: recgym-redis
@@ -63,7 +69,8 @@ services:
     container_name: recgym-kafka
     networks: [recgym-net]
     depends_on:
-      - zookeeper
+      zookeeper:
+        condition: service_healthy
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
@@ -220,23 +227,9 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
     restart: unless-stopped
-
-  # FEAST
-  feast:
-    build:
-      context: .
-      dockerfile: apps/features/Dockerfile
-    container_name: recgym-feast
-    networks: [recgym-net]
-    depends_on:
-      - postgres
-      - redis
-    volumes:
-      - ./features/feast:/app/feast
-    command: ["feast", "apply", "--repo", "/app/feast"]
 
   # GENERATOR SERVICE
   generator:
@@ -255,9 +248,9 @@ services:
     env_file:
       - .env
     environment:
-      PYTHONPATH: /app/src:/app
       OTEL_SERVICE_NAME: recgym-generator
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      PYTHONPATH: /app/src:/app
     volumes:
       - ./infra/schemas:/app/infra/schemas:ro
     command: ["python", "src/main.py"]
@@ -286,8 +279,78 @@ services:
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
     restart: unless-stopped
 
-# VOLUMES
-volumes:
-  postgres_data:
-  redis_data:
-  minio_data:
+  # FLINK JOBMANAGER
+  flink-jobmanager:
+    image: flink:1.17
+    container_name: recgym-flink-jobmanager
+    networks: [recgym-net]
+    command: jobmanager
+    ports:
+      - "8082:8081"
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+    volumes:
+      - ./apps/realtime:/opt/flink/usrlib/realtime
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # FLINK TASKMANAGER
+  flink-taskmanager:
+    image: flink:1.17
+    container_name: recgym-flink-taskmanager
+    networks: [recgym-net]
+    command: taskmanager
+    environment:
+      - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
+    volumes:
+      - ./apps/realtime:/opt/flink/usrlib/realtime
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+    restart: unless-stopped
+
+  # REALTIME SERVICE (PyFlink job submission)
+  realtime:
+    build:
+      context: .
+      dockerfile: apps/realtime/Dockerfile
+    container_name: recgym-realtime
+    networks: [recgym-net]
+    depends_on:
+      flink-jobmanager:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      OTEL_SERVICE_NAME: recgym-realtime
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    command: ["python", "src/main.py"]
+    restart: unless-stopped
+
+  # RT-BRIDGE SERVICE  (Kafka → Redis)
+  rt-bridge:
+    build:
+      context: .
+      dockerfile: apps/rt_bridge/Dockerfile
+    container_name: recgym-rt-bridge
+    networks: [recgym-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      OTEL_SERVICE_NAME: recgym-rt-bridge
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+    command: ["python", "src/main.py"]
+    restart: unless-stopped

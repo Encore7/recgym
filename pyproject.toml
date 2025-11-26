@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "recgym"
 version = "0.1.0"
-description = "RecGym monorepo: real-time recommendation system with Kafka, Spark/Flink feature pipelines, observability, and multi-service architecture."
+description = "RecGym monorepo: real-time recommendation system with Kafka, Spark/Flink pipelines, observability, and multi-service architecture."
 authors = ["Your Name <you@example.com>"]
 readme = "README.md"
 
@@ -13,7 +13,7 @@ packages = [
 [tool.poetry.dependencies]
 python = ">=3.11,<3.13"
 
-# Core Config & Models
+# Core config
 pydantic = "*"
 pydantic-settings = "*"
 python-dotenv = "*"
@@ -30,13 +30,19 @@ opentelemetry-instrumentation = "*"
 # Logging
 structlog = "*"
 
-# Kafka + Avro
+# Kafka
 confluent-kafka = "*"
-fastavro = "*"
 
-# Storage / S3 (MinIO)
-boto3 = "*"
+# Avro + Arrow
+fastavro = "*"
 pyarrow = "*"
+
+# S3 / MinIO
+boto3 = "*"
+
+# Feature engineering + Realtime
+pyflink = "*"       
+redis = "*"    
 
 # Utilities
 orjson = "*"
