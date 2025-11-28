@@ -8,7 +8,7 @@ Responsible for:
 
 import logging
 import os
-from typing import Any, Callable, Dict
+from typing import Any, Dict
 
 from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer

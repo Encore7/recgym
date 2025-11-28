@@ -1,7 +1,13 @@
 """
 Schema Registry registration for Avro schemas.
 
-Uses domain-level schema definitions and performs actual IO.
+This module is intentionally minimal for the generator service.
+
+We only register the RetailEvent Avro schema because:
+- Generator produces raw events to Kafka (events_raw)
+- Downstream Flink + Feast no longer use Kafka for user/item features
+- Realtime features go directly to Redis (Feast online store)
+- Therefore, user/item feature schemas are not needed in Schema Registry
 """
 
 import logging
@@ -11,10 +17,13 @@ from typing import Mapping
 from confluent_kafka.schema_registry import Schema, SchemaRegistryClient
 
 from apps.generator.src.core.config import SchemaRegistrySettings
-from apps.generator.src.domain.schemas import SUBJECT_TO_FILE
-
 
 logger = logging.getLogger(__name__)
+
+# Subject → Schema mapping used by Schema Registry.
+SUBJECT_TO_FILE: Mapping[str, str] = {
+    "events_raw-value": "RetailEvent.avsc",
+}
 
 
 def register_schemas(
@@ -22,14 +31,15 @@ def register_schemas(
     subject_to_file: Mapping[str, str] = SUBJECT_TO_FILE,
 ) -> None:
     """
-    Register Avro schemas for all known subjects.
+    Register Avro schemas in Schema Registry.
 
     Args:
-        cfg: Schema Registry configuration (URL + schema_dir).
-        subject_to_file: Mapping from registry subject to Avro filename.
+        cfg: Schema Registry config containing URL and schema directory.
+        subject_to_file: Mapping of subject names to Avro schema filenames.
 
     Notes:
-        Safe to call repeatedly (Schema Registry is idempotent).
+        - Safe to call repeatedly (Schema Registry is idempotent).
+        - Only RetailEvent schema is required for this generator service.
     """
     client = SchemaRegistryClient({"url": cfg.url})
 
@@ -39,29 +49,30 @@ def register_schemas(
         try:
             with open(path, encoding="utf-8") as f:
                 schema_str = f.read()
-        except FileNotFoundError as exc:
-            logger.warning(
-                "Schema file missing; skipping subject.",
+        except FileNotFoundError:
+            logger.error(
+                "Schema file missing; cannot register subject.",
                 extra={"subject": subject, "file": filename},
             )
             continue
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.error(
-                "Unexpected error reading Avro schema.",
+                "Unexpected error reading Avro schema file.",
                 extra={"subject": subject, "error": str(exc)},
             )
             continue
 
         schema = Schema(schema_str, "AVRO")
+
         try:
             version = client.register_schema(subject, schema)
             logger.info(
-                "Schema registered.",
+                "Schema registered successfully.",
                 extra={"subject": subject, "version": version},
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001
             logger.warning(
-                "Schema registration failed.",
+                "Schema registration failed; subject may already exist.",
                 extra={"subject": subject, "error": str(exc)},
             )
 

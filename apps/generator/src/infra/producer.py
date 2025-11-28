@@ -19,15 +19,13 @@ from apps.generator.src.core.config import (
     get_kafka_settings,
     get_schema_registry_settings,
 )
-from apps.generator.src.domain.models import RetailEvent
 from apps.generator.src.infra.generator import EventGenerator
 from apps.generator.src.infra.avro_serializer import build_retail_event_serializer
 from apps.generator.src.infra.schema_registry import register_schemas
 from apps.generator.src.infra.topics import ensure_topic
-
+from libs.models.events import RetailEvent
 from libs.observability.instrumentation import get_producer_instruments
 from libs.observability.tracing import get_tracer
-
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +53,11 @@ class KafkaEventProducer:
         self._event_gen = EventGenerator(self._generator_cfg)
 
         # OTel metrics instruments (counters + histogram)
-        self._produced_counter, self._failure_counter, self._latency_histogram = (
-            get_producer_instruments()
-        )
+        (
+            self._produced_counter,
+            self._failure_counter,
+            self._latency_histogram,
+        ) = get_producer_instruments()
 
         self._running: bool = True
         self._tracer = get_tracer("recgym.generator.producer")
@@ -74,8 +74,8 @@ class KafkaEventProducer:
                 "value.serializer": value_serializer,
                 "compression.type": "lz4",
                 "linger.ms": 50,
-                "batch.size": 32768,
-            }
+                "batch.size": 32_768,
+            },
         )
 
         # Graceful shutdown via signals
@@ -99,6 +99,7 @@ class KafkaEventProducer:
                     extra={"topic": self._kafka_cfg.topic},
                 )
                 # For local/dev we still continue; Kafka may be slow to respond.
+
             try:
                 register_schemas(self._schema_cfg)
             except Exception as exc:  # noqa: BLE001

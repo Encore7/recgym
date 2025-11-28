@@ -11,12 +11,7 @@ from datetime import datetime, timezone
 from typing import Generator, List, Sequence, TypeVar
 
 from apps.generator.src.core.config import GeneratorSettings
-from apps.generator.src.domain.models import (
-    DeviceType,
-    EventType,
-    PageType,
-    RetailEvent,
-)
+from libs.models.events import DeviceType, EventType, PageType, RetailEvent
 
 _T = TypeVar("_T")
 
@@ -39,8 +34,7 @@ class EventGenerator:
             cfg: Validated generator settings.
         """
         self._cfg = cfg
-        # We deliberately do not set a seed here; if you want deterministic
-        # behavior, pass GENERATOR__SEED later and use it to seed random.Random.
+
         import random
 
         self._rng = random.Random(cfg.seed) if cfg.seed is not None else random.Random()

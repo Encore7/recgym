@@ -46,10 +46,10 @@ class GeneratorSettings(BaseSettings):
     purchase_weight: float = Field(default=0.05, ge=0.0)
 
     categories: List[str] = Field(
-        default_factory=lambda: ["Electronics", "Fashion", "Books", "Home"]
+        default_factory=lambda: ["Electronics", "Fashion", "Books", "Home"],
     )
     referrers: List[Optional[str]] = Field(
-        default_factory=lambda: ["campaign_1", "campaign_2", None]
+        default_factory=lambda: ["campaign_1", "campaign_2", None],
     )
 
     price_min: float = Field(default=5.0)
@@ -58,6 +58,11 @@ class GeneratorSettings(BaseSettings):
     schema_dir: str = Field(
         default="/app/infra/schemas",
         description="Directory containing Avro schema files for this service.",
+    )
+
+    seed: Optional[int] = Field(
+        default=None,
+        description="Optional RNG seed for deterministic synthetic event generation.",
     )
 
     class Config:
@@ -130,6 +135,9 @@ def get_generator_settings() -> GeneratorSettings:
 def get_kafka_settings() -> KafkaSettings:
     """
     Cached accessor for KafkaSettings.
+
+    Returns:
+        KafkaSettings: validated Kafka configuration.
     """
     return KafkaSettings()
 
@@ -138,5 +146,8 @@ def get_kafka_settings() -> KafkaSettings:
 def get_schema_registry_settings() -> SchemaRegistrySettings:
     """
     Cached accessor for SchemaRegistrySettings.
+
+    Returns:
+        SchemaRegistrySettings: validated schema registry configuration.
     """
     return SchemaRegistrySettings()

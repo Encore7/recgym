@@ -130,8 +130,8 @@ services:
     container_name: recgym-minio
     networks: [recgym-net]
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-admin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-password123}
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     command: server /data --console-address ":9001"
     ports:
       - "9000:9000"
@@ -250,7 +250,7 @@ services:
     environment:
       OTEL_SERVICE_NAME: recgym-generator
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-      PYTHONPATH: /app/src:/app
+      OTEL_RESOURCE_ATTRIBUTES: service.name=recgym-generator,deployment.environment=local
     volumes:
       - ./infra/schemas:/app/infra/schemas:ro
     command: ["python", "src/main.py"]
@@ -270,6 +270,8 @@ services:
         condition: service_healthy
       minio:
         condition: service_healthy
+      kafka-connect:
+        condition: service_started
       otel-collector:
         condition: service_started
     env_file:
@@ -277,7 +279,50 @@ services:
     environment:
       OTEL_SERVICE_NAME: recgym-ingestion
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
+      OTEL_RESOURCE_ATTRIBUTES: service.name=recgym-ingestion,deployment.environment=local
     restart: unless-stopped
+
+  # KAFKA CONNECT SERVICE
+  kafka-connect:
+    build:
+      context: .
+      dockerfile: infra/kafka-connect/Dockerfile
+    container_name: recgym-kafka-connect
+    networks: [recgym-net]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      schema-registry:
+        condition: service_healthy
+    ports:
+      - "8083:8083"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: kafka:9092
+      CONNECT_REST_PORT: 8083
+
+      CONNECT_GROUP_ID: "recgym-connect"
+      CONNECT_CONFIG_STORAGE_TOPIC: "connect-configs"
+      CONNECT_OFFSET_STORAGE_TOPIC: "connect-offsets"
+      CONNECT_STATUS_STORAGE_TOPIC: "connect-status"
+
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+
+      CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
+
+      CONNECT_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
+      CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
+
+      CONNECT_INTERNAL_KEY_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+      CONNECT_INTERNAL_VALUE_CONVERTER: "org.apache.kafka.connect.json.JsonConverter"
+
+      CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
+
+      # These envs are read by the S3 connector for auth to MinIO
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      S3_REGION: us-east-1
 
   # FLINK JOBMANAGER
   flink-jobmanager:
