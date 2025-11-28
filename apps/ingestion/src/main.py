@@ -1,14 +1,24 @@
 """
-Entry point for the Kafka → S3 ingestion service.
+Entrypoint for the ingestion control-plane service.
+
+This service orchestrates:
+- Kafka Connect S3 sink for raw events
+- Lakehouse raw path/table lifecycle
+- Basic health/metrics around ingestion
 """
 
-from core.bootstrap import bootstrap
+import logging
+
+from apps.ingestion.src.core.bootstrap import bootstrap
+from libs.observability.instrumentation import init_observability
 
 
 def main() -> None:
     """
-    Bootstrap and run the ingestion service.
+    Initialize observability and run the ingestion service.
     """
+    init_observability(level=logging.INFO)
+
     service = bootstrap()
     service.run()
 
