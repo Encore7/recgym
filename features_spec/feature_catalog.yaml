@@ -1,0 +1,721 @@
+version: 1
+project: recgym
+description: >
+  Canonical feature catalog for recgym. ~95 features across user, item and
+  user-item (cross) entities. Silver layer normalizes events; Gold layer
+  computes aggregates, stats and embeddings.
+
+entities:
+  - name: user
+    join_key: user_id
+  - name: item
+    join_key: item_id
+  - name: user_item
+    join_keys: [user_id, item_id]
+
+layers:
+  silver:
+    description: >
+      Cleaned, canonicalized event-level tables derived from Bronze
+      (Kafka→Connect→MinIO).
+    tables:
+      - name: silver_events
+        path: s3a://recgym-raw/silver/events
+        grain: event
+        columns:
+          - name: user_id
+            dtype: string
+            description: User identifier.
+          - name: session_id
+            dtype: string
+            description: Session identifier.
+          - name: item_id
+            dtype: string
+            description: Item identifier.
+          - name: event_type
+            dtype: string
+            values: [view, add_to_cart, purchase]
+            description: Type of interaction.
+          - name: price
+            dtype: double
+            description: Price at time of event.
+          - name: category_path
+            dtype: array<string>
+            description: Hierarchical category path.
+          - name: device
+            dtype: string
+            values: [web, ios, android]
+            description: Device type.
+          - name: page
+            dtype: string
+            values: [home, plp, pdp, cart]
+            description: Page type.
+          - name: referrer
+            dtype: string
+            nullable: true
+            description: Campaign / referrer tag.
+          - name: ts
+            dtype: timestamp
+            description: Event timestamp (UTC).
+      - name: silver_users
+        path: s3a://recgym-raw/silver/users
+        grain: user
+        description: Optional normalized user table derived from events or meta.
+        columns:
+          - name: user_id
+            dtype: string
+          - name: first_seen_ts
+            dtype: timestamp
+          - name: last_seen_ts
+            dtype: timestamp
+      - name: silver_items
+        path: s3a://recgym-raw/silver/items
+        grain: item
+        description: Optional normalized item table; can be built from catalog + events.
+        columns:
+          - name: item_id
+            dtype: string
+          - name: title
+            dtype: string
+          - name: description
+            dtype: string
+          - name: category_path
+            dtype: array<string>
+          - name: brand
+            dtype: string
+          - name: base_price
+            dtype: double
+          - name: created_ts
+            dtype: timestamp
+
+gold:
+  description: >
+    Aggregated features at user, item and user_item grain. Computed from silver tables
+    via batch jobs (PySpark). These become Feast features and training features.
+
+  user_features:
+    entity: user
+    table:
+      name: gold_user_features
+      path: s3a://recgym-raw/gold/user_features
+      grain: user
+      partition: date
+    features:
+
+      # --- USER VOLUME & COUNTS (8) ---
+      - name: user_total_events_30d
+        dtype: int64
+        family: volume
+        description: Total interactions in last 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_views_30d
+        dtype: int64
+        family: volume
+        description: View events in last 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_add_to_cart_30d
+        dtype: int64
+        family: volume
+        description: Add-to-cart events in last 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_purchases_30d
+        dtype: int64
+        family: volume
+        description: Purchase events in last 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_view_to_cart_rate_30d
+        dtype: float32
+        family: conversion
+        description: add_to_cart / view over 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_cart_to_purchase_rate_30d
+        dtype: float32
+        family: conversion
+        description: purchase / add_to_cart over 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_distinct_items_viewed_30d
+        dtype: int32
+        family: diversity
+        description: Number of distinct items viewed in 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_distinct_categories_viewed_30d
+        dtype: int32
+        family: diversity
+        description: Number of distinct categories viewed in 30 days.
+        source_table: silver_events
+        window: 30d
+
+      # --- USER MONETARY STATS (4) ---
+      - name: user_avg_price_30d
+        dtype: float32
+        family: monetary
+        description: Average price of interacted items in 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_price_std_30d
+        dtype: float32
+        family: monetary
+        description: Std dev of item prices in 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_max_price_30d
+        dtype: float32
+        family: monetary
+        description: Max item price user interacted with in 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_min_price_30d
+        dtype: float32
+        family: monetary
+        description: Min item price user interacted with in 30 days.
+        source_table: silver_events
+        window: 30d
+
+      # --- USER RECENCY (5) ---
+      - name: user_time_since_last_event_sec
+        dtype: float32
+        family: recency
+        description: Seconds since last interaction.
+        source_table: silver_events
+        window: all
+
+      - name: user_time_since_last_view_sec
+        dtype: float32
+        family: recency
+        description: Seconds since last view event.
+        source_table: silver_events
+        window: all
+
+      - name: user_time_since_last_cart_sec
+        dtype: float32
+        family: recency
+        description: Seconds since last add_to_cart event.
+        source_table: silver_events
+        window: all
+
+      - name: user_time_since_last_purchase_sec
+        dtype: float32
+        family: recency
+        description: Seconds since last purchase event.
+        source_table: silver_events
+        window: all
+
+      - name: user_days_since_first_event
+        dtype: float32
+        family: lifetime
+        description: Days since user's first ever event.
+        source_table: silver_events
+        window: all
+
+      # --- USER SESSION METRICS (4) ---
+      - name: user_avg_session_length_events_30d
+        dtype: float32
+        family: session
+        description: Average events per session over last 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_median_session_length_events_30d
+        dtype: float32
+        family: session
+        description: Median events per session over last 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_sessions_7d
+        dtype: int32
+        family: session
+        description: Number of sessions in last 7 days.
+        source_table: silver_events
+        window: 7d
+
+      - name: user_events_last_session
+        dtype: int32
+        family: session
+        description: Events in the most recent session.
+        source_table: silver_events
+        window: last_session
+
+      # --- USER DEVICE MIX (3) ---
+      - name: user_web_events_share_30d
+        dtype: float32
+        family: device
+        description: Share of events from web in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_ios_events_share_30d
+        dtype: float32
+        family: device
+        description: Share of events from iOS in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_android_events_share_30d
+        dtype: float32
+        family: device
+        description: Share of events from Android in 30d.
+        source_table: silver_events
+        window: 30d
+
+      # --- USER TEMPORAL PATTERNS (3) ---
+      - name: user_morning_event_share_30d
+        dtype: float32
+        family: temporal
+        description: Share of events between 06:00-12:00 in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_evening_event_share_30d
+        dtype: float32
+        family: temporal
+        description: Share of events between 18:00-24:00 in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_night_event_share_30d
+        dtype: float32
+        family: temporal
+        description: Share of events between 00:00-06:00 in 30d.
+        source_table: silver_events
+        window: 30d
+
+      # --- USER CATEGORY PREFERENCE (3) ---
+      - name: user_top_category_1
+        dtype: string
+        family: category_pref
+        description: Most frequent category in last 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_top_category_2
+        dtype: string
+        family: category_pref
+        description: 2nd most frequent category in last 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: user_top_category_3
+        dtype: string
+        family: category_pref
+        description: 3rd most frequent category in last 30d.
+        source_table: silver_events
+        window: 30d
+
+      # --- USER EMBEDDING (10 dims) ---
+      - name: user_behavior_emb_1
+        dtype: float32
+        family: embedding
+        description: Dim 1 of user behavior embedding (e.g. from category sequences).
+        source_table: gold_user_features
+      - name: user_behavior_emb_2
+        dtype: float32
+        family: embedding
+        description: Dim 2 of user behavior embedding.
+        source_table: gold_user_features
+      - name: user_behavior_emb_3
+        dtype: float32
+        family: embedding
+        description: Dim 3 of user behavior embedding.
+        source_table: gold_user_features
+      - name: user_behavior_emb_4
+        dtype: float32
+        family: embedding
+        description: Dim 4 of user behavior embedding.
+        source_table: gold_user_features
+      - name: user_behavior_emb_5
+        dtype: float32
+        family: embedding
+        description: Dim 5 of user behavior embedding.
+        source_table: gold_user_features
+      - name: user_behavior_emb_6
+        dtype: float32
+        family: embedding
+        description: Dim 6 of user behavior embedding.
+        source_table: gold_user_features
+      - name: user_behavior_emb_7
+        dtype: float32
+        family: embedding
+        description: Dim 7 of user behavior embedding.
+        source_table: gold_user_features
+      - name: user_behavior_emb_8
+        dtype: float32
+        family: embedding
+        description: Dim 8 of user behavior embedding.
+        source_table: gold_user_features
+      - name: user_behavior_emb_9
+        dtype: float32
+        family: embedding
+        description: Dim 9 of user behavior embedding.
+        source_table: gold_user_features
+      - name: user_behavior_emb_10
+        dtype: float32
+        family: embedding
+        description: Dim 10 of user behavior embedding.
+        source_table: gold_user_features
+
+  item_features:
+    entity: item
+    table:
+      name: gold_item_features
+      path: s3a://recgym-raw/gold/item_features
+      grain: item
+      partition: date
+    features:
+
+      # --- ITEM VOLUME & POPULARITY (11) ---
+      - name: item_views_30d
+        dtype: int64
+        family: volume
+        description: View count in last 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_carts_30d
+        dtype: int64
+        family: volume
+        description: Add-to-cart count in last 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_purchases_30d
+        dtype: int64
+        family: volume
+        description: Purchase count in last 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_ctr_30d
+        dtype: float32
+        family: conversion
+        description: CTR-like metric (view->interaction) in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_cart_to_purchase_rate_30d
+        dtype: float32
+        family: conversion
+        description: purchase / add_to_cart over 30 days.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_avg_price_30d
+        dtype: float32
+        family: monetary
+        description: Average observed price in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_price_std_30d
+        dtype: float32
+        family: monetary
+        description: Std dev of observed prices in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_max_price_30d
+        dtype: float32
+        family: monetary
+        description: Max observed price in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_min_price_30d
+        dtype: float32
+        family: monetary
+        description: Min observed price in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_distinct_users_viewed_30d
+        dtype: int32
+        family: diversity
+        description: Number of distinct users who viewed this item in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_distinct_users_purchased_30d
+        dtype: int32
+        family: diversity
+        description: Number of distinct users who purchased this item in 30d.
+        source_table: silver_events
+        window: 30d
+
+      # --- ITEM RECENCY (3) ---
+      - name: item_time_since_last_event_sec
+        dtype: float32
+        family: recency
+        description: Seconds since last interaction.
+        source_table: silver_events
+        window: all
+
+      - name: item_time_since_last_view_sec
+        dtype: float32
+        family: recency
+        description: Seconds since last view.
+        source_table: silver_events
+        window: all
+
+      - name: item_time_since_last_purchase_sec
+        dtype: float32
+        family: recency
+        description: Seconds since last purchase.
+        source_table: silver_events
+        window: all
+
+      # --- ITEM CATEGORY / BRAND (6) ---
+      - name: item_category_popularity_30d
+        dtype: float32
+        family: category
+        description: Category-level normalized popularity (scaled 0-1).
+        source_table: silver_events
+        window: 30d
+
+      - name: item_brand_popularity_30d
+        dtype: float32
+        family: brand
+        description: Brand-level normalized popularity (scaled 0-1).
+        source_table: silver_events
+        window: 30d
+
+      - name: item_category_depth
+        dtype: int32
+        family: category
+        description: Depth of category_path (length).
+        source_table: silver_items
+        window: all
+
+      - name: item_is_discounted_flag
+        dtype: int32
+        family: price
+        description: 1 if base_price > avg observed price, else 0.
+        source_table: silver_items
+        window: 30d
+
+      - name: item_discount_rate_avg_30d
+        dtype: float32
+        family: price
+        description: Avg relative discount vs base_price in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_log_popularity_score_30d
+        dtype: float32
+        family: popularity
+        description: log(1 + views_30d + carts_30d + purchases_30d).
+        source_table: silver_events
+        window: 30d
+
+      # --- ITEM TEXT / CONTENT STRUCTURAL (6) ---
+      - name: item_title_length_chars
+        dtype: int32
+        family: text_stats
+        description: Length of item title in characters.
+        source_table: silver_items
+        window: all
+
+      - name: item_description_length_chars
+        dtype: int32
+        family: text_stats
+        description: Length of description in characters.
+        source_table: silver_items
+        window: all
+
+      - name: item_num_images
+        dtype: int32
+        family: content
+        description: Number of images attached to item (simulated or from meta).
+        source_table: silver_items
+        window: all
+
+      - name: item_num_attributes
+        dtype: int32
+        family: content
+        description: Number of attributes in item metadata (simulated).
+        source_table: silver_items
+        window: all
+
+      - name: item_morning_view_share_30d
+        dtype: float32
+        family: temporal
+        description: Share of views between 06:00-12:00 in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: item_evening_view_share_30d
+        dtype: float32
+        family: temporal
+        description: Share of views between 18:00-24:00 in 30d.
+        source_table: silver_events
+        window: 30d
+
+      # --- ITEM BEHAVIOR EMBEDDING (10 dims) ---
+      - name: item_behavior_emb_1
+        dtype: float32
+        family: embedding
+        description: Dim 1 of item behavior/content embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_2
+        dtype: float32
+        family: embedding
+        description: Dim 2 of item behavior/content embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_3
+        dtype: float32
+        family: embedding
+        description: Dim 3 of item behavior/content embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_4
+        dtype: float32
+        family: embedding
+        description: Dim 4 of item behavior/content embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_5
+        dtype: float32
+        family: embedding
+        description: Dim 5 of item behavior/content embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_6
+        dtype: float32
+        family: embedding
+        description: Dim 6 of item behavior/content embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_7
+        dtype: float32
+        family: embedding
+        description: Dim 7 of item behavior embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_8
+        dtype: float32
+        family: embedding
+        description: Dim 8 of item behavior embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_9
+        dtype: float32
+        family: embedding
+        description: Dim 9 of item behavior embedding.
+        source_table: gold_item_features
+      - name: item_behavior_emb_10
+        dtype: float32
+        family: embedding
+        description: Dim 10 of item behavior embedding.
+        source_table: gold_item_features
+
+  cross_features:
+    entity: user_item
+    table:
+      name: gold_user_item_features
+      path: s3a://recgym-raw/gold/cross_features
+      grain: user_item
+      partition: date
+    features:
+
+      - name: ui_price_diff_from_user_avg
+        dtype: float32
+        family: price_alignment
+        description: item_price - user_avg_price_30d.
+        source_table: [gold_user_features, silver_items]
+
+      - name: ui_price_zscore_for_user
+        dtype: float32
+        family: price_alignment
+        description: (item_price - user_avg_price_30d) / user_price_std_30d.
+        source_table: [gold_user_features, silver_items]
+
+      - name: ui_same_category_flag
+        dtype: int32
+        family: category_match
+        description: 1 if item category in user's top 3 categories, else 0.
+        source_table: [gold_user_features, silver_items]
+
+      - name: ui_same_top_category_flag
+        dtype: int32
+        family: category_match
+        description: 1 if item category == user_top_category_1, else 0.
+        source_table: [gold_user_features, silver_items]
+
+      - name: ui_category_affinity_score
+        dtype: float32
+        family: affinity
+        description: Score of user affinity to item's category (e.g. normalized count).
+        source_table: [silver_events]
+
+      - name: ui_brand_affinity_score
+        dtype: float32
+        family: affinity
+        description: Score of user affinity to item's brand.
+        source_table: [silver_events, silver_items]
+
+      - name: ui_user_item_co_views_30d
+        dtype: int32
+        family: cooccurrence
+        description: Number of times user viewed this item in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: ui_user_item_co_carts_30d
+        dtype: int32
+        family: cooccurrence
+        description: Number of times user added this item to cart in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: ui_user_item_co_purchases_30d
+        dtype: int32
+        family: cooccurrence
+        description: Number of times user purchased this item in 30d.
+        source_table: silver_events
+        window: 30d
+
+      - name: ui_time_since_user_last_interaction_with_item_sec
+        dtype: float32
+        family: recency
+        description: Seconds since last interaction of this user with this item.
+        source_table: silver_events
+
+      - name: ui_position_in_session
+        dtype: int32
+        family: session_context
+        description: 1-based index of event within session when predicting.
+        source_table: silver_events
+
+      - name: ui_session_event_count
+        dtype: int32
+        family: session_context
+        description: Total events in current session.
+        source_table: silver_events
+
+      - name: ui_recency_bucket
+        dtype: int32
+        family: recency
+        description: Bucketized recency (e.g. 0=very recent, 3=very old).
+        source_table: silver_events
+
+      - name: ui_user_item_similarity_emb
+        dtype: float32
+        family: similarity
+        description: Dot product or cosine similarity between user_behavior_emb and item_behavior_emb.
+        source_table: [gold_user_features, gold_item_features]
+
+      - name: ui_user_item_exploration_score
+        dtype: float32
+        family: exploration
+        description: Score indicating how novel this item is to the user.
+        source_table: [gold_user_features, gold_item_features]
