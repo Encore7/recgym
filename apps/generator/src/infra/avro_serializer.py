@@ -14,8 +14,8 @@ from confluent_kafka.schema_registry import SchemaRegistryClient
 from confluent_kafka.schema_registry.avro import AvroSerializer
 
 from apps.generator.src.core.config import SchemaRegistrySettings
-from apps.generator.src.domain.schemas import RETAIL_EVENT_SUBJECT, SUBJECT_TO_FILE
-from apps.generator.src.domain.models import RetailEvent
+from apps.generator.src.infra.schema_registry import SUBJECT_TO_FILE
+from libs.models.events import RetailEvent
 
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,7 @@ def build_retail_event_serializer(
         SystemExit: If schema file cannot be found or read.
     """
     client = SchemaRegistryClient({"url": cfg.url})
-    filename = SUBJECT_TO_FILE[RETAIL_EVENT_SUBJECT]
+    filename = SUBJECT_TO_FILE["raw-events-value"]
     schema_path = os.path.join(cfg.schema_dir, filename)
 
     try:

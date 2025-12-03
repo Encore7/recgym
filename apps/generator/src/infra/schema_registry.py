@@ -21,8 +21,8 @@ from apps.generator.src.core.config import SchemaRegistrySettings
 logger = logging.getLogger(__name__)
 
 # Subject → Schema mapping used by Schema Registry.
-SUBJECT_TO_FILE: Mapping[str, str] = {
-    "events_raw-value": "RetailEvent.avsc",
+SUBJECT_TO_FILE = {
+    "raw-events-value": "RetailEvent.avsc",
 }
 
 

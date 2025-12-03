@@ -17,6 +17,7 @@ python = ">=3.11,<3.13"
 pydantic = "*"
 pydantic-settings = "*"
 python-dotenv = "*"
+requests = "*"
 
 # Observability (OTEL)
 opentelemetry-api = "*"

@@ -30,13 +30,8 @@ class KafkaConfig(BaseSettings):
     bootstrap_servers: str = Field(default="kafka:9092")
     schema_registry_url: str = Field(default="http://schema-registry:8081")
 
-    input_topic: str = Field(default="events_raw")
-    output_topic: str = Field(default="raw-events")
+    raw_topic: str = Field(default="raw-events")
     consumer_group: str = Field(default="recgym-consumer")
-
-    # Realtime feature topics (shared)
-    user_feature_topic: str = Field(default="user_features_rt")
-    item_feature_topic: str = Field(default="item_features_rt")
 
     model_config = SettingsConfigDict(extra="ignore")
 
@@ -87,11 +82,7 @@ class ServiceConfig(BaseSettings):
 
 
 class AppConfig(BaseSettings):
-    """
-    Root global configuration object.
-
-    NOTE: no service-specific configs here.
-    """
+    """Root global configuration object."""
 
     kafka: KafkaConfig = Field(default_factory=KafkaConfig)
     s3: S3Config = Field(default_factory=S3Config)

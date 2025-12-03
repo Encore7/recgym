@@ -88,7 +88,7 @@ class KafkaSettings(BaseSettings):
     topic: str = Field(
         default="events_raw",
         description="Kafka topic to which synthetic events are produced.",
-        env="KAFKA__INPUT_TOPIC",
+        env="KAFKA__RAW_TOPIC",
     )
 
     class Config:

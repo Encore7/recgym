@@ -17,10 +17,10 @@ from typing import NoReturn
 
 from libs.config import AppConfig
 from libs.observability.tracing import get_tracer
-from core.config import IngestionSettings
-from infra.connect_client import KafkaConnectClient
-from infra.lakehouse_manager import LakehouseManager
-from infra.metrics import get_ingestion_instruments
+from apps.ingestion.src.core.config import IngestionSettings
+from apps.ingestion.src.infra.connect_client import KafkaConnectClient
+from apps.ingestion.src.infra.lakehouse_manager import LakehouseManager
+from apps.ingestion.src.infra.metrics import get_ingestion_instruments
 
 
 class IngestionService:
@@ -88,11 +88,19 @@ class IngestionService:
             "connector.class": "io.confluent.connect.s3.S3SinkConnector",
             "tasks.max": "1",
 
-            "topics": kafka.input_topic,
+            "topics": kafka.raw_topic,
+
+            "key.converter": "org.apache.kafka.connect.storage.StringConverter",
+            "value.converter": "io.confluent.connect.avro.AvroConverter",
+            "value.converter.schema.registry.url": kafka.schema_registry_url,
 
             "s3.bucket.name": s3.bucket,
             "s3.region": "us-east-1",
             "store.url": s3.endpoint_url,
+
+            "s3.credentials.provider.class": "io.confluent.connect.s3.auth.BasicCredentialsProvider",
+            "aws.access.key.id": s3.access_key,
+            "aws.secret.access.key": s3.secret_key,
 
             "flush.size": "1000",
             "rotate.interval.ms": "60000",
