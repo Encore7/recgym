@@ -8,20 +8,24 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  spark_data:
+  airflow_logs:
+  airflow_dags:
+  airflow_plugins:
 
 # SERVICES
 services:
 
-  # POSTGRES (Feast Offline Store)
+  # POSTGRES (Feast Offline Store + Airflow Metadata)
   postgres:
     image: postgres:15
     container_name: recgym-postgres
     networks: [recgym-net]
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-recgym}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-recgym}
-      POSTGRES_DB: ${POSTGRES_DB:-recgym}
+      POSTGRES_USER: recgym
+      POSTGRES_PASSWORD: recgym
+      POSTGRES_DB: recgym
     ports:
       - "5432:5432"
     volumes:
@@ -30,7 +34,7 @@ services:
       test: ["CMD", "pg_isready", "-U", "recgym"]
       interval: 5s
       timeout: 5s
-      retries: 10
+    retries: 10
 
   # REDIS (Feast Online Store)
   redis:
@@ -76,7 +80,6 @@ services:
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     ports:
@@ -156,8 +159,8 @@ services:
     ports:
       - "5050:5000"
     environment:
-      AWS_ACCESS_KEY_ID: ${MINIO_ROOT_USER:-admin}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_ROOT_PASSWORD:-password123}
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
 
   # PROMETHEUS
@@ -170,7 +173,7 @@ services:
     ports:
       - "9090:9090"
 
-  # TEMPO
+  # TEMPO (Traces)
   tempo:
     image: grafana/tempo:latest
     container_name: recgym-tempo
@@ -181,7 +184,7 @@ services:
       - "3200:3200"
     command: ["--config.file=/etc/tempo/config.yml"]
 
-  # LOKI
+  # LOKI (Logs)
   loki:
     image: grafana/loki:2.9.2
     container_name: recgym-loki
@@ -192,18 +195,19 @@ services:
     ports:
       - "3100:3100"
 
-  # PROMTAIL
+  # PROMTAIL (Log collector → Loki)
   promtail:
     image: grafana/promtail:2.9.2
     container_name: recgym-promtail
     networks: [recgym-net]
     volumes:
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - ./logs:/var/log/recgym
       - ./infra/promtail/config.yml:/etc/promtail/config.yml
     depends_on:
       - loki
 
-  # OTEL COLLECTOR
+  # OTEL COLLECTOR (Traces + Metrics)
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.103.0
     container_name: recgym-otel-collector
@@ -282,7 +286,7 @@ services:
       OTEL_RESOURCE_ATTRIBUTES: service.name=recgym-ingestion,deployment.environment=local
     restart: unless-stopped
 
-  # KAFKA CONNECT SERVICE
+  # KAFKA CONNECT
   kafka-connect:
     build:
       context: .
@@ -310,7 +314,6 @@ services:
       CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
 
       CONNECT_KEY_CONVERTER: "org.apache.kafka.connect.storage.StringConverter"
-
       CONNECT_VALUE_CONVERTER: "io.confluent.connect.avro.AvroConverter"
       CONNECT_VALUE_CONVERTER_SCHEMA_REGISTRY_URL: "http://schema-registry:8081"
 
@@ -319,10 +322,10 @@ services:
 
       CONNECT_PLUGIN_PATH: "/usr/share/java,/usr/share/confluent-hub-components"
 
-      # These envs are read by the S3 connector for auth to MinIO
       AWS_ACCESS_KEY_ID: minioadmin
       AWS_SECRET_ACCESS_KEY: minioadmin
-      S3_REGION: us-east-1
+      CONNECT_S3_REGION: us-east-1
+      CONNECT_S3_BUCKET_NAME: recgym-raw
 
   # FLINK JOBMANAGER
   flink-jobmanager:
@@ -335,7 +338,7 @@ services:
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
     volumes:
-      - ./apps/realtime:/opt/flink/usrlib/realtime
+      - ./pipelines/realtime:/opt/flink/usrlib/realtime
     depends_on:
       kafka:
         condition: service_healthy
@@ -350,17 +353,17 @@ services:
     environment:
       - JOB_MANAGER_RPC_ADDRESS=flink-jobmanager
     volumes:
-      - ./apps/realtime:/opt/flink/usrlib/realtime
+      - ./pipelines/realtime:/opt/flink/usrlib/realtime
     depends_on:
       flink-jobmanager:
         condition: service_started
     restart: unless-stopped
 
-  # REALTIME SERVICE (PyFlink job submission)
+  # REALTIME PYFLINK SERVICE
   realtime:
     build:
       context: .
-      dockerfile: apps/realtime/Dockerfile
+      dockerfile: pipelines/realtime/Dockerfile
     container_name: recgym-realtime
     networks: [recgym-net]
     depends_on:
@@ -378,24 +381,84 @@ services:
     command: ["python", "src/main.py"]
     restart: unless-stopped
 
-  # RT-BRIDGE SERVICE  (Kafka → Redis)
-  rt-bridge:
+  # SPARK MASTER
+  spark:
     build:
       context: .
-      dockerfile: apps/rt_bridge/Dockerfile
-    container_name: recgym-rt-bridge
+      dockerfile: infra/spark/Dockerfile
+    container_name: recgym-spark-master
     networks: [recgym-net]
-    depends_on:
-      kafka:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      otel-collector:
-        condition: service_started
-    env_file:
-      - .env
     environment:
-      OTEL_SERVICE_NAME: recgym-rt-bridge
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4317
-    command: ["python", "src/main.py"]
-    restart: unless-stopped
+      - SPARK_MODE=master
+    ports:
+      - "7077:7077"
+      - "8088:8080"
+    volumes:
+      - spark_data:/opt/spark/work-dir
+      - ./:/opt/recgym
+
+  # SPARK WORKER
+  spark-worker:
+    image: bitnami/spark:3.5.0
+    container_name: recgym-spark-worker
+    networks: [recgym-net]
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark:7077
+    depends_on:
+      spark:
+        condition: service_started
+    volumes:
+      - spark_data:/opt/spark/work-dir
+      - ./:/opt/recgym
+
+  # AIRFLOW INIT
+  airflow-init:
+    image: apache/airflow:2.9.1
+    container_name: recgym-airflow-init
+    entrypoint: /bin/bash
+    command: >
+      -c "
+      airflow db init &&
+      airflow users create --username admin --password admin --firstname admin --lastname admin --role Admin --email admin@example.com
+      "
+    depends_on:
+      - postgres
+    networks:
+      - recgym-net
+
+  # AIRFLOW SCHEDULER
+  airflow-scheduler:
+    image: apache/airflow:2.9.1
+    container_name: recgym-airflow-scheduler
+    depends_on:
+      - airflow-init
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    volumes:
+      - ./apps/airflow/dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - airflow_plugins:/opt/airflow/plugins
+      - ./:/opt/recgym
+    command: scheduler
+    networks:
+      - recgym-net
+
+  # AIRFLOW WEBSERVER
+  airflow-webserver:
+    image: apache/airflow:2.9.1
+    container_name: recgym-airflow-webserver
+    depends_on:
+      - airflow-scheduler
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    volumes:
+      - ./apps/airflow/dags:/opt/airflow/dags
+      - airflow_logs:/opt/airflow/logs
+      - airflow_plugins:/opt/airflow/plugins
+      - ./:/opt/recgym
+    ports:
+      - "8085:8080"
+    command: webserver
+    networks:
+      - recgym-net
