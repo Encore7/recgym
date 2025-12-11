@@ -1,22 +1,25 @@
 from feast import FileSource
-from batch.config import get_batch_paths
 
-paths = get_batch_paths()
-
-user_features_source = FileSource(
+# Gold user features (partitioned by date)
+gold_user_features_source = FileSource(
     name="gold_user_features_source",
-    path=paths.gold_user_features,
-    timestamp_field="date",
+    path="s3a://recgym-raw/gold/user_features",
+    timestamp_field="date",  # partition column
+    schema=None,  # use Parquet schema
 )
 
-item_features_source = FileSource(
+# Gold item features (partitioned by date)
+gold_item_features_source = FileSource(
     name="gold_item_features_source",
-    path=paths.gold_item_features,
+    path="s3a://recgym-raw/gold/item_features",
     timestamp_field="date",
+    schema=None,
 )
 
-cross_features_source = FileSource(
-    name="gold_cross_features_source",
-    path=paths.gold_cross_features,
+# Gold cross features (user_item)
+gold_user_item_features_source = FileSource(
+    name="gold_user_item_features_source",
+    path="s3a://recgym-raw/gold/cross_features",
     timestamp_field="date",
+    schema=None,
 )

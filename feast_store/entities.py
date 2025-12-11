@@ -15,5 +15,5 @@ item = Entity(
 user_item = Entity(
     name="user_item",
     join_keys=["user_id", "item_id"],
-    description="User–item cross entity.",
+    description="User-item cross entity.",
 )
